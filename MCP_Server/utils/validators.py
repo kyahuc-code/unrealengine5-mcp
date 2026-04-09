@@ -7,7 +7,6 @@ from typing import List, Dict, Any, Optional
 MAX_NAME_LENGTH = 256
 MAX_PATH_LENGTH = 512
 MAX_LIMIT = 10000
-MAX_CODE_LENGTH = 50000
 
 
 def validate_name(value: str, name: str) -> Optional[str]:
@@ -40,7 +39,8 @@ def validate_path(value: str, name: str) -> Optional[str]:
     if len(value) > MAX_PATH_LENGTH:
         return f"{name} exceeds maximum length of {MAX_PATH_LENGTH} characters"
     if not value.startswith("/"):
-        return f"{name} must start with '/' (Unreal content path), got '{value}'"
+        preview = repr(value[:50]) if len(value) > 50 else repr(value)
+        return f"{name} must start with '/' (Unreal content path), got {preview}"
     return None
 
 
@@ -49,7 +49,7 @@ def validate_limit(value: int, name: str = "limit", min_val: int = 1, max_val: i
     Validate a limit/count parameter.
     Returns error message if invalid, None if valid.
     """
-    if not isinstance(value, int):
+    if isinstance(value, bool) or not isinstance(value, int):
         return f"{name} must be an integer, got {type(value).__name__}"
     if value < min_val:
         return f"{name} must be at least {min_val}, got {value}"
@@ -60,13 +60,16 @@ def validate_limit(value: int, name: str = "limit", min_val: int = 1, max_val: i
 
 def validate_positive_float(value: float, name: str) -> Optional[str]:
     """
-    Validate a positive float parameter (radius, mass, etc.).
+    Validate a finite positive float parameter (radius, mass, etc.).
     Returns error message if invalid, None if valid.
     """
     try:
         fv = float(value)
     except (TypeError, ValueError):
         return f"{name} must be a number, got {type(value).__name__}"
+    import math
+    if math.isinf(fv) or math.isnan(fv):
+        return f"{name} must be a finite number, got {fv}"
     if fv <= 0.0:
         return f"{name} must be positive, got {fv}"
     return None
@@ -77,7 +80,7 @@ def validate_non_negative_int(value: int, name: str) -> Optional[str]:
     Validate a non-negative integer parameter (material_slot, etc.).
     Returns error message if invalid, None if valid.
     """
-    if not isinstance(value, int):
+    if isinstance(value, bool) or not isinstance(value, int):
         return f"{name} must be an integer, got {type(value).__name__}"
     if value < 0:
         return f"{name} cannot be negative, got {value}"
