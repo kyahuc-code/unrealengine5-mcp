@@ -12,7 +12,8 @@ from MCP_Server.tools import (
     register_editor_tools,
     register_blueprint_tools,
     register_pcg_tools,
-    register_rag_tool
+    register_rag_tool,
+    register_widget_tools
 )
 from MCP_Server.unreal_client import get_unreal_client
 from MCP_Server.rag_system import get_retriever
@@ -86,6 +87,9 @@ def main():
     print("  - Registering RAG tool (complex tasks)...", file=sys.stderr)
     register_rag_tool(mcp)
 
+    print("  - Registering Widget Blueprint tools...", file=sys.stderr)
+    register_widget_tools(mcp)
+
     print("\n" + "=" * 70, file=sys.stderr)
     print("[OK] MCP Server is running!", file=sys.stderr)
     print("=" * 70, file=sys.stderr)
@@ -94,6 +98,7 @@ def main():
     print("  - Blueprint Tools: Create and modify blueprints programmatically", file=sys.stderr)
     print("  - PCG Tools: Create and manipulate PCG graphs for procedural generation", file=sys.stderr)
     print("  - RAG Tool: Handle complex requests using Unreal API knowledge", file=sys.stderr)
+    print("  - Widget Tools: Create and manipulate Widget Blueprints (UMG/UI)", file=sys.stderr)
     print("\nConnect Claude Desktop to start automating Unreal Engine!", file=sys.stderr)
     print("=" * 70, file=sys.stderr)
     print(file=sys.stderr)

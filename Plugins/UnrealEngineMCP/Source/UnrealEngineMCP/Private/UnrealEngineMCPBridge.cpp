@@ -4,6 +4,7 @@
 #include "Commands/BlueprintCommands.h"
 #include "Commands/PCGCommands.h"
 #include "Commands/PythonExecutor.h"
+#include "Commands/WidgetCommands.h"
 #include "Sockets.h"
 #include "SocketSubsystem.h"
 #include "HAL/RunnableThread.h"
@@ -14,6 +15,7 @@
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonWriter.h"
+#include "ScopedTransaction.h"
 
 #define MCP_SERVER_HOST "127.0.0.1"
 #define MCP_SERVER_PORT 55557
@@ -32,6 +34,7 @@ UUnrealEngineMCPBridge::UUnrealEngineMCPBridge()
 	BlueprintCommandHandler = MakeShared<FBlueprintCommands>();
 	PCGCommandHandler = MakeShared<FPCGCommands>();
 	PythonExecutorHandler = MakeShared<FPythonExecutor>();
+	WidgetCommandHandler = MakeShared<FWidgetCommands>();
 }
 
 UUnrealEngineMCPBridge::~UUnrealEngineMCPBridge()
@@ -40,6 +43,7 @@ UUnrealEngineMCPBridge::~UUnrealEngineMCPBridge()
 	BlueprintCommandHandler.Reset();
 	PCGCommandHandler.Reset();
 	PythonExecutorHandler.Reset();
+	WidgetCommandHandler.Reset();
 }
 
 void UUnrealEngineMCPBridge::Initialize(FSubsystemCollectionBase& Collection)
@@ -142,17 +146,132 @@ bool UUnrealEngineMCPBridge::WaitForResponse(uint32 RequestId, FMcpCommandRespon
 	return false;
 }
 
+static bool IsReadOnlyCommand(const FString& CommandType)
+{
+	return CommandType == TEXT("ping") ||
+		   CommandType == TEXT("list_level_actors") ||
+		   CommandType == TEXT("get_actor_properties") ||
+		   CommandType == TEXT("get_actor_material_info") ||
+		   CommandType == TEXT("search_actors") ||
+		   CommandType == TEXT("search_assets") ||
+		   CommandType == TEXT("list_folder_assets") ||
+		   CommandType == TEXT("get_world_partition_info") ||
+		   CommandType == TEXT("search_actors_in_region") ||
+		   CommandType == TEXT("list_level_instances") ||
+		   CommandType == TEXT("get_level_instance_actors") ||
+		   CommandType == TEXT("list_gameplay_tags") ||
+		   CommandType == TEXT("list_blueprint_nodes") ||
+		   CommandType == TEXT("get_blueprint_material_info") ||
+		   CommandType == TEXT("analyze_blueprint") ||
+		   CommandType == TEXT("list_attribute_sets") ||
+		   CommandType == TEXT("get_attribute_set_info") ||
+		   CommandType == TEXT("search_functions") ||
+		   CommandType == TEXT("get_class_functions") ||
+		   CommandType == TEXT("get_class_properties") ||
+		   CommandType == TEXT("get_blueprint_variables") ||
+		   CommandType == TEXT("get_pin_value") ||
+		   CommandType == TEXT("list_graphs") ||
+		   CommandType == TEXT("analyze_pcg_graph") ||
+		   CommandType == TEXT("list_pcg_nodes") ||
+		   CommandType == TEXT("analyze_widget_blueprint") ||
+		   CommandType == TEXT("list_widget_children");
+}
+
 FString UUnrealEngineMCPBridge::ExecuteCommandInternal(const FString& CommandType, const TSharedPtr<FJsonObject>& Params)
 {
 	UE_LOG(LogTemp, Display, TEXT("UnrealEngineMCPBridge: Executing command: %s"), *CommandType);
 
 	TSharedPtr<FJsonObject> ResponseJson = MakeShared<FJsonObject>();
 
+	// Wrap state-modifying commands in a transaction for Undo support
+	TUniquePtr<FScopedTransaction> Transaction;
+	if (!IsReadOnlyCommand(CommandType) && CommandType != TEXT("batch_execute"))
+	{
+		Transaction = MakeUnique<FScopedTransaction>(FText::FromString(
+			FString::Printf(TEXT("MCP: %s"), *CommandType)));
+	}
+
 	try
 	{
 		TSharedPtr<FJsonObject> ResultJson;
 
-		if (CommandType == TEXT("ping"))
+		// Batch execute: run multiple commands as a single Undo unit
+		if (CommandType == TEXT("batch_execute"))
+		{
+			FScopedTransaction BatchTransaction(FText::FromString(TEXT("MCP: Batch Execute")));
+
+			const TArray<TSharedPtr<FJsonValue>>* CommandsArray;
+			if (!Params->TryGetArrayField(TEXT("commands"), CommandsArray))
+			{
+				ResponseJson->SetStringField(TEXT("status"), TEXT("error"));
+				ResponseJson->SetStringField(TEXT("error"), TEXT("Missing 'commands' array parameter"));
+				FString ErrStr;
+				TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> ErrWriter =
+					TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&ErrStr);
+				FJsonSerializer::Serialize(ResponseJson.ToSharedRef(), ErrWriter);
+				return ErrStr;
+			}
+
+			TArray<TSharedPtr<FJsonValue>> Results;
+			int32 SuccessCount = 0;
+			int32 ErrorCount = 0;
+
+			for (int32 i = 0; i < CommandsArray->Num(); i++)
+			{
+				TSharedPtr<FJsonObject> CmdObj = (*CommandsArray)[i]->AsObject();
+				if (!CmdObj.IsValid())
+				{
+					TSharedPtr<FJsonObject> ErrResult = MakeShared<FJsonObject>();
+					ErrResult->SetStringField(TEXT("status"), TEXT("error"));
+					ErrResult->SetStringField(TEXT("error"), FString::Printf(TEXT("commands[%d] is not a valid object"), i));
+					Results.Add(MakeShared<FJsonValueObject>(ErrResult));
+					ErrorCount++;
+					continue;
+				}
+
+				FString SubType = CmdObj->GetStringField(TEXT("type"));
+				TSharedPtr<FJsonObject> SubParams = CmdObj->GetObjectField(TEXT("params"));
+				if (!SubParams.IsValid())
+				{
+					SubParams = MakeShared<FJsonObject>();
+				}
+
+				// Don't allow nested batch_execute
+				if (SubType == TEXT("batch_execute"))
+				{
+					TSharedPtr<FJsonObject> ErrResult = MakeShared<FJsonObject>();
+					ErrResult->SetStringField(TEXT("status"), TEXT("error"));
+					ErrResult->SetStringField(TEXT("error"), TEXT("Nested batch_execute is not allowed"));
+					Results.Add(MakeShared<FJsonValueObject>(ErrResult));
+					ErrorCount++;
+					continue;
+				}
+
+				FString SubResponse = ExecuteCommandInternal(SubType, SubParams);
+				TSharedPtr<FJsonObject> SubResponseJson;
+				TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(SubResponse);
+				if (FJsonSerializer::Deserialize(Reader, SubResponseJson) && SubResponseJson.IsValid())
+				{
+					Results.Add(MakeShared<FJsonValueObject>(SubResponseJson));
+					if (SubResponseJson->GetStringField(TEXT("status")) == TEXT("success"))
+					{
+						SuccessCount++;
+					}
+					else
+					{
+						ErrorCount++;
+					}
+				}
+			}
+
+			ResultJson = MakeShared<FJsonObject>();
+			ResultJson->SetBoolField(TEXT("success"), ErrorCount == 0);
+			ResultJson->SetNumberField(TEXT("total"), CommandsArray->Num());
+			ResultJson->SetNumberField(TEXT("succeeded"), SuccessCount);
+			ResultJson->SetNumberField(TEXT("failed"), ErrorCount);
+			ResultJson->SetArrayField(TEXT("results"), Results);
+		}
+		else if (CommandType == TEXT("ping"))
 		{
 			ResultJson = MakeShared<FJsonObject>();
 			ResultJson->SetStringField(TEXT("message"), TEXT("pong"));
@@ -233,6 +352,17 @@ FString UUnrealEngineMCPBridge::ExecuteCommandInternal(const FString& CommandTyp
 				 CommandType == TEXT("get_pin_value"))
 		{
 			ResultJson = BlueprintCommandHandler->HandleCommand(CommandType, Params);
+		}
+		// Widget Blueprint commands
+		else if (CommandType == TEXT("create_widget_blueprint") ||
+				 CommandType == TEXT("analyze_widget_blueprint") ||
+				 CommandType == TEXT("add_widget") ||
+				 CommandType == TEXT("remove_widget") ||
+				 CommandType == TEXT("set_widget_property") ||
+				 CommandType == TEXT("set_widget_slot") ||
+				 CommandType == TEXT("list_widget_children"))
+		{
+			ResultJson = WidgetCommandHandler->HandleCommand(CommandType, Params);
 		}
 		// PCG commands
 		else if (CommandType == TEXT("create_pcg_graph") ||

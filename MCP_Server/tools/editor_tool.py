@@ -493,4 +493,26 @@ def register_editor_tools(mcp: FastMCP):
             return {"connected": False, "message": "Failed to ping Unreal Engine"}
         return client.get_connection_status()
 
+    # =========================================================================
+    # Batch Execution Tools
+    # =========================================================================
+
+    @mcp.tool()
+    def batch_execute(
+        commands: List[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """Execute multiple commands as a single Undo unit.
+        Each command: {"type": "command_name", "params": {...}}.
+        All commands succeed or can be rolled back with Ctrl+Z in Unreal Editor."""
+        if not commands:
+            return create_error_response("commands list cannot be empty")
+        if len(commands) > 100:
+            return create_error_response("commands list cannot exceed 100 items")
+        for i, cmd in enumerate(commands):
+            if not isinstance(cmd, dict):
+                return create_error_response(f"commands[{i}] must be a dict")
+            if "type" not in cmd:
+                return create_error_response(f"commands[{i}] missing 'type' field")
+        return get_unreal_client().execute_command("batch_execute", {"commands": commands})
+
     log_info("Editor tools registered successfully")
