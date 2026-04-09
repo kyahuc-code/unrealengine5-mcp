@@ -1,7 +1,7 @@
 """
 Socket Client - TCP communication with Unreal Engine plugin.
 
-Singleton client with automatic retry logic for transient connection errors.
+Singleton client with persistent connection and automatic retry logic.
 """
 import socket
 import json
@@ -21,7 +21,7 @@ RETRYABLE_ERRORS = (
 
 
 class UnrealSocketClient:
-    """TCP socket client for Unreal Engine communication with retry logic."""
+    """TCP socket client for Unreal Engine communication with persistent connection."""
     _instance = None
 
     def __new__(cls):
@@ -38,6 +38,33 @@ class UnrealSocketClient:
         self.timeout = float(SOCKET_TIMEOUT)
         self._socket: Optional[socket.socket] = None
         self._initialized = True
+
+    def _is_connected(self) -> bool:
+        """Check if socket is still alive without sending data."""
+        if self._socket is None:
+            return False
+        try:
+            # Use non-blocking peek to test connection
+            self._socket.setblocking(False)
+            try:
+                data = self._socket.recv(1, socket.MSG_PEEK)
+                if not data:
+                    return False  # Connection closed by remote
+            except BlockingIOError:
+                pass  # No data available = connection is alive
+            except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError, OSError):
+                return False
+            finally:
+                self._socket.settimeout(self.timeout)
+            return True
+        except Exception:
+            return False
+
+    def _ensure_connected(self) -> bool:
+        """Ensure connection is alive, reconnect if needed."""
+        if self._is_connected():
+            return True
+        return self._connect()
 
     def _connect(self) -> bool:
         """Establish connection to Unreal Engine."""
@@ -95,10 +122,8 @@ class UnrealSocketClient:
         return b''.join(chunks)
 
     def _send_command_once(self, command_type: str, params: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """Single attempt to send command."""
-        self._close_socket()
-
-        if not self._connect():
+        """Single attempt to send command over persistent connection."""
+        if not self._ensure_connected():
             return {"status": "error", "error": "Failed to connect to Unreal Engine"}
 
         command = {"type": command_type, "params": params}
@@ -110,8 +135,16 @@ class UnrealSocketClient:
             response_data = self._receive_full_response()
             response_str = response_data.decode('utf-8').strip()
             return json.loads(response_str)
-        finally:
+        except RETRYABLE_ERRORS:
+            # Connection broken during send/recv - close and let retry logic reconnect
             self._close_socket()
+            raise
+        except socket.timeout:
+            # Timeout doesn't necessarily mean connection is dead, but close to be safe
+            self._close_socket()
+            raise
+        except json.JSONDecodeError:
+            raise
 
     def send_command(self, command_type: str, params: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Send command with retry logic for transient connection errors."""
@@ -170,7 +203,7 @@ class UnrealSocketClient:
         params: Dict[str, Any],
         log_errors: bool = True
     ) -> Dict[str, Any]:
-        """Execute command with error handling and I/O logging."""
+        """Execute command with error handling, suggestions, and I/O logging."""
         start_time = time.time()
         response = None
 
@@ -184,8 +217,11 @@ class UnrealSocketClient:
                 response = create_error_response(error_msg)
                 return response
 
-            if response.get("status") == "error" and log_errors:
-                log_error(f"{command} failed: {response.get('error')}")
+            if response.get("status") == "error":
+                if log_errors:
+                    log_error(f"{command} failed: {response.get('error')}")
+                # Add suggestions for "not found" errors
+                self._enrich_error_response(response, command, params)
 
             return response
 
@@ -198,6 +234,44 @@ class UnrealSocketClient:
         finally:
             duration_ms = (time.time() - start_time) * 1000
             log_mcp_call(command, params, response, duration_ms)
+
+    def _enrich_error_response(self, response: Dict[str, Any], command: str, params: Dict[str, Any]):
+        """Add suggestions to error responses for 'not found' type errors."""
+        error_msg = response.get("error", "").lower()
+        if "not found" not in error_msg and "does not exist" not in error_msg:
+            return
+
+        # Don't enrich if already has suggestions
+        if "suggestion" in response or "suggested_paths" in response:
+            return
+
+        try:
+            # Determine what to search for based on the command and params
+            search_name = None
+            if "name" in params and isinstance(params["name"], str):
+                search_name = params["name"]
+            elif "actor_name" in params and isinstance(params["actor_name"], str):
+                search_name = params["actor_name"]
+            elif "blueprint_name" in params and isinstance(params["blueprint_name"], str):
+                search_name = params["blueprint_name"]
+            elif "graph_name" in params and isinstance(params["graph_name"], str):
+                search_name = params["graph_name"]
+
+            if not search_name:
+                return
+
+            # Search for similar names
+            search_result = self.send_command("search_actors", {
+                "pattern": search_name, "limit": 5
+            })
+            if search_result and search_result.get("status") == "success":
+                actors = search_result.get("result", {}).get("actors", [])
+                candidates = [a.get("name") for a in actors if isinstance(a, dict) and a.get("name")]
+                if candidates:
+                    response["candidates"] = candidates[:5]
+                    response["suggestion"] = f"Did you mean one of: {', '.join(candidates[:3])}?"
+        except Exception:
+            pass  # Don't let enrichment errors break the flow
 
 
 def get_unreal_client() -> UnrealSocketClient:

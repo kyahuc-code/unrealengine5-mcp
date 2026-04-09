@@ -13,10 +13,25 @@ from ..utils import log_info, log_error, log_warning
 from ..unreal_client import get_unreal_client
 from config import DANGEROUS_KEYWORDS, PYTHON_EXEC_TIMEOUT
 
+MAX_CODE_LENGTH = 50000
+
 
 # =========================================================================
 # Validation Helpers
 # =========================================================================
+
+def _validate_category(category: Optional[str]) -> Optional[str]:
+    """Validate category parameter."""
+    if category is None:
+        return None
+    if not isinstance(category, str):
+        return f"category must be a string, got {type(category).__name__}"
+    if not category.strip():
+        return "category cannot be empty"
+    if len(category) > 256:
+        return f"category exceeds maximum length of 256 characters"
+    return None
+
 
 def _validate_keywords(keywords: List[str]) -> Optional[str]:
     """Validate keywords parameter."""
@@ -62,6 +77,8 @@ def _validate_code(code: str) -> Optional[str]:
     code_stripped = code.strip()
     if not code_stripped:
         return "Code cannot be empty"
+    if len(code_stripped) > MAX_CODE_LENGTH:
+        return f"Code exceeds maximum length of {MAX_CODE_LENGTH} characters"
 
     code_lower = code_stripped.lower()
     for keyword in DANGEROUS_KEYWORDS:
@@ -127,6 +144,10 @@ def register_rag_tool(mcp: FastMCP):
             if error := _validate_top_k(top_k):
                 log_error(f"search_unreal_api validation failed: {error}")
                 return _create_error_response(error, "top_k should be between 1 and 50")
+
+            if error := _validate_category(category):
+                log_error(f"search_unreal_api validation failed: {error}")
+                return _create_error_response(error, "Please provide a valid category string")
 
             query = " ".join(keywords)
             log_info(f"Searching Unreal API documentation with query: '{query}'")

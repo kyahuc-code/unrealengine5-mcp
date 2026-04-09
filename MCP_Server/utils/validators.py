@@ -3,6 +3,89 @@ Validators - Parameter validation utilities for MCP tools.
 """
 from typing import List, Dict, Any, Optional
 
+# Constraints
+MAX_NAME_LENGTH = 256
+MAX_PATH_LENGTH = 512
+MAX_LIMIT = 10000
+
+
+def validate_name(value: str, name: str) -> Optional[str]:
+    """
+    Validate a name/identifier parameter (actor name, blueprint name, etc.).
+    Returns error message if invalid, None if valid.
+    """
+    if value is None:
+        return f"{name} cannot be None"
+    if not isinstance(value, str):
+        return f"{name} must be a string, got {type(value).__name__}"
+    if not value.strip():
+        return f"{name} cannot be empty"
+    if len(value) > MAX_NAME_LENGTH:
+        return f"{name} exceeds maximum length of {MAX_NAME_LENGTH} characters"
+    return None
+
+
+def validate_path(value: str, name: str) -> Optional[str]:
+    """
+    Validate an Unreal asset path parameter.
+    Returns error message if invalid, None if valid.
+    """
+    if value is None:
+        return f"{name} cannot be None"
+    if not isinstance(value, str):
+        return f"{name} must be a string, got {type(value).__name__}"
+    if not value.strip():
+        return f"{name} cannot be empty"
+    if len(value) > MAX_PATH_LENGTH:
+        return f"{name} exceeds maximum length of {MAX_PATH_LENGTH} characters"
+    if not value.startswith("/"):
+        preview = repr(value[:50]) if len(value) > 50 else repr(value)
+        return f"{name} must start with '/' (Unreal content path), got {preview}"
+    return None
+
+
+def validate_limit(value: int, name: str = "limit", min_val: int = 1, max_val: int = MAX_LIMIT) -> Optional[str]:
+    """
+    Validate a limit/count parameter.
+    Returns error message if invalid, None if valid.
+    """
+    if isinstance(value, bool) or not isinstance(value, int):
+        return f"{name} must be an integer, got {type(value).__name__}"
+    if value < min_val:
+        return f"{name} must be at least {min_val}, got {value}"
+    if value > max_val:
+        return f"{name} cannot exceed {max_val}, got {value}"
+    return None
+
+
+def validate_positive_float(value: float, name: str) -> Optional[str]:
+    """
+    Validate a finite positive float parameter (radius, mass, etc.).
+    Returns error message if invalid, None if valid.
+    """
+    try:
+        fv = float(value)
+    except (TypeError, ValueError):
+        return f"{name} must be a number, got {type(value).__name__}"
+    import math
+    if math.isinf(fv) or math.isnan(fv):
+        return f"{name} must be a finite number, got {fv}"
+    if fv <= 0.0:
+        return f"{name} must be positive, got {fv}"
+    return None
+
+
+def validate_non_negative_int(value: int, name: str) -> Optional[str]:
+    """
+    Validate a non-negative integer parameter (material_slot, etc.).
+    Returns error message if invalid, None if valid.
+    """
+    if isinstance(value, bool) or not isinstance(value, int):
+        return f"{name} must be an integer, got {type(value).__name__}"
+    if value < 0:
+        return f"{name} cannot be negative, got {value}"
+    return None
+
 
 def validate_vector2(value: List[float], name: str) -> Optional[str]:
     """

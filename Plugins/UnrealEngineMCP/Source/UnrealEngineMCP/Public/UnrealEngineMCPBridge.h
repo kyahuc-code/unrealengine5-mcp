@@ -15,6 +15,7 @@ class FEditorCommands;
 class FBlueprintCommands;
 class FPCGCommands;
 class FPythonExecutor;
+class FWidgetCommands;
 
 // Command request structure
 struct FMcpCommandRequest
@@ -95,6 +96,7 @@ private:
 	TSharedPtr<FBlueprintCommands> BlueprintCommandHandler;
 	TSharedPtr<FPCGCommands> PCGCommandHandler;
 	TSharedPtr<FPythonExecutor> PythonExecutorHandler;
+	TSharedPtr<FWidgetCommands> WidgetCommandHandler;
 
 	// Command queues (thread-safe)
 	TQueue<FMcpCommandRequest, EQueueMode::Mpsc> CommandQueue;  // Multi-producer, single-consumer

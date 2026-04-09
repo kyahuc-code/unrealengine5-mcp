@@ -10,7 +10,9 @@ from ..unreal_client import get_unreal_client
 from ..utils import (
     log_info, log_error,
     validate_vector3, validate_color, ensure_floats, create_error_response,
-    validate_vectors
+    validate_vectors,
+    validate_name, validate_path, validate_limit, validate_positive_float,
+    validate_non_negative_int
 )
 from ..helpers import get_unique_actor_name, safe_spawn_actor, safe_delete_actor
 
@@ -34,6 +36,15 @@ def register_editor_tools(mcp: FastMCP):
     ) -> Dict[str, Any]:
         """Spawn an actor in the current level."""
         try:
+            for val, param_name in [(name, "name"), (actor_type, "actor_type")]:
+                if error := validate_name(val, param_name):
+                    log_error(f"spawn_actor validation failed: {error}")
+                    return create_error_response(error)
+
+            if static_mesh and (error := validate_name(static_mesh, "static_mesh")):
+                log_error(f"spawn_actor validation failed: {error}")
+                return create_error_response(error)
+
             if err := validate_vectors("spawn_actor", log_error, [
                 (location, "location", validate_vector3),
                 (rotation, "rotation", validate_vector3),
@@ -72,6 +83,15 @@ def register_editor_tools(mcp: FastMCP):
     ) -> Dict[str, Any]:
         """Spawn a Blueprint asset as an actor in the current level."""
         try:
+            for val, param_name in [(blueprint_name, "blueprint_name"), (actor_name, "actor_name")]:
+                if error := validate_name(val, param_name):
+                    log_error(f"spawn_blueprint_actor validation failed: {error}")
+                    return create_error_response(error)
+
+            if error := validate_path(blueprint_path, "blueprint_path"):
+                log_error(f"spawn_blueprint_actor validation failed: {error}")
+                return create_error_response(error)
+
             if err := validate_vectors("spawn_blueprint_actor", log_error, [
                 (location, "location", validate_vector3),
                 (rotation, "rotation", validate_vector3),
@@ -112,6 +132,10 @@ def register_editor_tools(mcp: FastMCP):
     def delete_actor(name: str) -> Dict[str, Any]:
         """Delete an actor from the current level by name."""
         try:
+            if error := validate_name(name, "name"):
+                log_error(f"delete_actor validation failed: {error}")
+                return create_error_response(error)
+
             client = get_unreal_client()
             return safe_delete_actor(client, name)
         except Exception as e:
@@ -135,6 +159,10 @@ def register_editor_tools(mcp: FastMCP):
         scale: Optional[List[float]] = None
     ) -> Dict[str, Any]:
         """Update an actor's transform."""
+        if error := validate_name(name, "name"):
+            log_error(f"set_actor_transform validation failed: {error}")
+            return create_error_response(error)
+
         if err := validate_vectors("set_actor_transform", log_error, [
             (location, "location", validate_vector3),
             (rotation, "rotation", validate_vector3),
@@ -155,6 +183,9 @@ def register_editor_tools(mcp: FastMCP):
     @mcp.tool()
     def get_actor_properties(name: str) -> Dict[str, Any]:
         """Retrieve all properties of an actor by name."""
+        if error := validate_name(name, "name"):
+            log_error(f"get_actor_properties validation failed: {error}")
+            return create_error_response(error)
         return get_unreal_client().execute_command("get_actor_properties", {"name": name})
 
     @mcp.tool()
@@ -164,6 +195,10 @@ def register_editor_tools(mcp: FastMCP):
         property_value: Any
     ) -> Dict[str, Any]:
         """Set a specific property on an actor."""
+        for val, param_name in [(name, "name"), (property_name, "property_name")]:
+            if error := validate_name(val, param_name):
+                log_error(f"set_actor_property validation failed: {error}")
+                return create_error_response(error)
         return get_unreal_client().execute_command("set_actor_property", {
             "name": name,
             "property_name": property_name,
@@ -181,6 +216,12 @@ def register_editor_tools(mcp: FastMCP):
         material_path: str = "/Game/Materials/"
     ) -> Dict[str, Any]:
         """Create a material with a base color."""
+        if error := validate_name(material_name, "material_name"):
+            log_error(f"create_material validation failed: {error}")
+            return create_error_response(error)
+        if error := validate_path(material_path, "material_path"):
+            log_error(f"create_material validation failed: {error}")
+            return create_error_response(error)
         if error := validate_color(color, "color"):
             log_error(f"create_material validation failed: {error}")
             return create_error_response(error)
@@ -202,6 +243,15 @@ def register_editor_tools(mcp: FastMCP):
         material_slot: int = 0
     ) -> Dict[str, Any]:
         """Apply material to a level actor instance."""
+        if error := validate_name(actor_name, "actor_name"):
+            log_error(f"apply_material_to_actor validation failed: {error}")
+            return create_error_response(error)
+        if error := validate_path(material_path, "material_path"):
+            log_error(f"apply_material_to_actor validation failed: {error}")
+            return create_error_response(error)
+        if error := validate_non_negative_int(material_slot, "material_slot"):
+            log_error(f"apply_material_to_actor validation failed: {error}")
+            return create_error_response(error)
         return get_unreal_client().execute_command("apply_material_to_actor", {
             "actor_name": actor_name,
             "material_path": material_path,
@@ -211,6 +261,9 @@ def register_editor_tools(mcp: FastMCP):
     @mcp.tool()
     def get_actor_material_info(actor_name: str) -> Dict[str, Any]:
         """Get material info for a level actor instance."""
+        if error := validate_name(actor_name, "actor_name"):
+            log_error(f"get_actor_material_info validation failed: {error}")
+            return create_error_response(error)
         return get_unreal_client().execute_command("get_actor_material_info", {
             "actor_name": actor_name
         })
@@ -228,6 +281,12 @@ def register_editor_tools(mcp: FastMCP):
         level_instance_filter: str = ""
     ) -> Dict[str, Any]:
         """Search actors by name pattern in the current level."""
+        if error := validate_name(pattern, "pattern"):
+            log_error(f"search_actors validation failed: {error}")
+            return create_error_response(error)
+        if error := validate_limit(limit, "limit"):
+            log_error(f"search_actors validation failed: {error}")
+            return create_error_response(error)
         params = {
             "pattern": pattern,
             "class_filter": class_filter,
@@ -261,6 +320,15 @@ def register_editor_tools(mcp: FastMCP):
     ) -> Dict[str, Any]:
         """Search any asset type (Level, DataTable, Blueprint, Material, Mesh, etc.) in Content Browser.
         Searches all paths including plugins by default. Filter by object_type (UClass name) or use base_class to find derived classes."""
+        if error := validate_name(name, "name"):
+            log_error(f"search_assets validation failed: {error}")
+            return create_error_response(error)
+        if error := validate_path(search_path, "search_path"):
+            log_error(f"search_assets validation failed: {error}")
+            return create_error_response(error)
+        if error := validate_limit(limit, "limit"):
+            log_error(f"search_assets validation failed: {error}")
+            return create_error_response(error)
         params = {
             "name": name,
             "search_scope": search_scope,
@@ -291,6 +359,12 @@ def register_editor_tools(mcp: FastMCP):
         limit: int = 100
     ) -> Dict[str, Any]:
         """List assets in a Content Browser folder."""
+        if error := validate_path(folder_path, "folder_path"):
+            log_error(f"list_folder_assets validation failed: {error}")
+            return create_error_response(error)
+        if error := validate_limit(limit, "limit"):
+            log_error(f"list_folder_assets validation failed: {error}")
+            return create_error_response(error)
         params = {
             "folder_path": folder_path,
             "recursive": recursive,
@@ -320,6 +394,12 @@ def register_editor_tools(mcp: FastMCP):
         limit: int = 100
     ) -> Dict[str, Any]:
         """Search actors within a spherical region."""
+        if error := validate_positive_float(radius, "radius"):
+            log_error(f"search_actors_in_region validation failed: {error}")
+            return create_error_response(error)
+        if error := validate_limit(limit, "limit"):
+            log_error(f"search_actors_in_region validation failed: {error}")
+            return create_error_response(error)
         return get_unreal_client().execute_command("search_actors_in_region", {
             "x": float(x),
             "y": float(y),
@@ -332,6 +412,9 @@ def register_editor_tools(mcp: FastMCP):
     @mcp.tool()
     def load_actor_by_guid(guid: str) -> Dict[str, Any]:
         """Load an actor by GUID in World Partition map."""
+        if error := validate_name(guid, "guid"):
+            log_error(f"load_actor_by_guid validation failed: {error}")
+            return create_error_response(error)
         return get_unreal_client().execute_command("load_actor_by_guid", {"guid": guid})
 
     @mcp.tool()
@@ -343,6 +426,9 @@ def register_editor_tools(mcp: FastMCP):
         radius: float
     ) -> Dict[str, Any]:
         """Set load state of actors in a World Partition region."""
+        if error := validate_positive_float(radius, "radius"):
+            log_error(f"set_region_loaded validation failed: {error}")
+            return create_error_response(error)
         return get_unreal_client().execute_command("set_region_loaded", {
             "loaded": loaded,
             "x": float(x),
@@ -364,6 +450,9 @@ def register_editor_tools(mcp: FastMCP):
     @mcp.tool()
     def get_level_instance_actors(level_instance_name: str) -> Dict[str, Any]:
         """Get all actors inside a specific Level Instance."""
+        if error := validate_name(level_instance_name, "level_instance_name"):
+            log_error(f"get_level_instance_actors validation failed: {error}")
+            return create_error_response(error)
         client = get_unreal_client()
         return client.execute_command("get_level_instance_actors", {
             "level_instance_name": level_instance_name
@@ -380,6 +469,12 @@ def register_editor_tools(mcp: FastMCP):
         limit: int = 100
     ) -> Dict[str, Any]:
         """List registered GameplayTags. Useful for tag validation and discovery."""
+        if error := validate_limit(max_depth, "max_depth", min_val=1, max_val=100):
+            log_error(f"list_gameplay_tags validation failed: {error}")
+            return create_error_response(error)
+        if error := validate_limit(limit, "limit"):
+            log_error(f"list_gameplay_tags validation failed: {error}")
+            return create_error_response(error)
         return get_unreal_client().execute_command("list_gameplay_tags", {
             "prefix": prefix,
             "max_depth": int(max_depth),
@@ -397,5 +492,27 @@ def register_editor_tools(mcp: FastMCP):
         if not client.ping():
             return {"connected": False, "message": "Failed to ping Unreal Engine"}
         return client.get_connection_status()
+
+    # =========================================================================
+    # Batch Execution Tools
+    # =========================================================================
+
+    @mcp.tool()
+    def batch_execute(
+        commands: List[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """Execute multiple commands as a single Undo unit.
+        Each command: {"type": "command_name", "params": {...}}.
+        All commands succeed or can be rolled back with Ctrl+Z in Unreal Editor."""
+        if not commands:
+            return create_error_response("commands list cannot be empty")
+        if len(commands) > 100:
+            return create_error_response("commands list cannot exceed 100 items")
+        for i, cmd in enumerate(commands):
+            if not isinstance(cmd, dict):
+                return create_error_response(f"commands[{i}] must be a dict")
+            if "type" not in cmd:
+                return create_error_response(f"commands[{i}] missing 'type' field")
+        return get_unreal_client().execute_command("batch_execute", {"commands": commands})
 
     log_info("Editor tools registered successfully")

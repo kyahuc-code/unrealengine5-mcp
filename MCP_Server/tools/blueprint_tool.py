@@ -11,7 +11,9 @@ from ..unreal_client import get_unreal_client
 from ..utils import (
     log_info, log_error,
     validate_vector2, validate_vector3, ensure_floats, create_error_response,
-    validate_vectors
+    validate_vectors,
+    validate_name, validate_path, validate_limit, validate_positive_float,
+    validate_non_negative_int
 )
 from ..helpers import get_unique_actor_name
 
@@ -221,6 +223,24 @@ class PinDefault(BaseModel):
 _NodeAdapter = TypeAdapter(AbilityGraphNode)
 
 
+def _validate_bp_params(func_name: str, blueprint_name: str = None, blueprint_path: str = None,
+                         component_name: str = None) -> Optional[Dict[str, Any]]:
+    """Validate common Blueprint parameters. Returns error response or None."""
+    if blueprint_name is not None:
+        if error := validate_name(blueprint_name, "blueprint_name"):
+            log_error(f"{func_name} validation failed: {error}")
+            return create_error_response(error)
+    if blueprint_path is not None:
+        if error := validate_path(blueprint_path, "blueprint_path"):
+            log_error(f"{func_name} validation failed: {error}")
+            return create_error_response(error)
+    if component_name is not None:
+        if error := validate_name(component_name, "component_name"):
+            log_error(f"{func_name} validation failed: {error}")
+            return create_error_response(error)
+    return None
+
+
 def register_blueprint_tools(mcp: FastMCP):
     """Register Blueprint manipulation tools with MCP server"""
 
@@ -237,6 +257,16 @@ def register_blueprint_tools(mcp: FastMCP):
     ) -> Dict[str, Any]:
         """Create a Blueprint asset. parent_class must be AActor subclass."""
         try:
+            if error := validate_name(name, "name"):
+                log_error(f"create_blueprint validation failed: {error}")
+                return create_error_response(error)
+            if error := validate_path(blueprint_path, "blueprint_path"):
+                log_error(f"create_blueprint validation failed: {error}")
+                return create_error_response(error)
+            if error := validate_name(parent_class, "parent_class"):
+                log_error(f"create_blueprint validation failed: {error}")
+                return create_error_response(error)
+
             client = get_unreal_client()
             original_name = name
 
@@ -270,6 +300,8 @@ def register_blueprint_tools(mcp: FastMCP):
         validate_only: bool = False
     ) -> Dict[str, Any]:
         """Compile a Blueprint. Validates graph first, returns validation_issues on failure."""
+        if err := _validate_bp_params("compile_blueprint", blueprint_name, blueprint_path):
+            return err
         return get_unreal_client().execute_command("compile_blueprint", {
             "blueprint_name": blueprint_name,
             "blueprint_path": blueprint_path,
@@ -291,6 +323,11 @@ def register_blueprint_tools(mcp: FastMCP):
         scale: List[float] = [1.0, 1.0, 1.0]
     ) -> Dict[str, Any]:
         """Add a component to a Blueprint."""
+        if err := _validate_bp_params("add_component_to_blueprint", blueprint_name, blueprint_path, component_name):
+            return err
+        if error := validate_name(component_type, "component_type"):
+            log_error(f"add_component_to_blueprint validation failed: {error}")
+            return create_error_response(error)
         if err := validate_vectors("add_component_to_blueprint", log_error, [
             (location, "location", validate_vector3),
             (rotation, "rotation", validate_vector3),
@@ -317,6 +354,11 @@ def register_blueprint_tools(mcp: FastMCP):
         value: str
     ) -> Dict[str, Any]:
         """Set a property on a Blueprint component. Searches SCS, CDO, and inherited components."""
+        if err := _validate_bp_params("set_component_property", blueprint_name, blueprint_path, component_name):
+            return err
+        if error := validate_name(property_name, "property_name"):
+            log_error(f"set_component_property validation failed: {error}")
+            return create_error_response(error)
         return get_unreal_client().execute_command("set_component_property", {
             "blueprint_name": blueprint_name,
             "component_name": component_name,
@@ -335,6 +377,11 @@ def register_blueprint_tools(mcp: FastMCP):
         enable_gravity: bool = True
     ) -> Dict[str, Any]:
         """Configure physics settings for a Blueprint component."""
+        if err := _validate_bp_params("set_physics_properties", blueprint_name, blueprint_path, component_name):
+            return err
+        if error := validate_positive_float(mass, "mass"):
+            log_error(f"set_physics_properties validation failed: {error}")
+            return create_error_response(error)
         return get_unreal_client().execute_command("set_physics_properties", {
             "blueprint_name": blueprint_name,
             "component_name": component_name,
@@ -357,6 +404,14 @@ def register_blueprint_tools(mcp: FastMCP):
         material_slot: int = 0
     ) -> Dict[str, Any]:
         """Apply material to Blueprint CDO."""
+        if err := _validate_bp_params("apply_material_to_blueprint", blueprint_name, blueprint_path, component_name):
+            return err
+        if error := validate_path(material_path, "material_path"):
+            log_error(f"apply_material_to_blueprint validation failed: {error}")
+            return create_error_response(error)
+        if error := validate_non_negative_int(material_slot, "material_slot"):
+            log_error(f"apply_material_to_blueprint validation failed: {error}")
+            return create_error_response(error)
         return get_unreal_client().execute_command("apply_material_to_blueprint", {
             "blueprint_name": blueprint_name,
             "component_name": component_name,
@@ -372,6 +427,8 @@ def register_blueprint_tools(mcp: FastMCP):
         component_name: str
     ) -> Dict[str, Any]:
         """Get material info for Blueprint CDO component."""
+        if err := _validate_bp_params("get_blueprint_material_info", blueprint_name, blueprint_path, component_name):
+            return err
         return get_unreal_client().execute_command("get_blueprint_material_info", {
             "blueprint_name": blueprint_name,
             "component_name": component_name,
@@ -390,6 +447,11 @@ def register_blueprint_tools(mcp: FastMCP):
     ) -> Dict[str, Any]:
         """Set material color on a mesh component."""
         try:
+            if err := _validate_bp_params("set_mesh_material_color", blueprint_name, blueprint_path, component_name):
+                return err
+            if error := validate_non_negative_int(material_slot, "material_slot"):
+                log_error(f"set_mesh_material_color validation failed: {error}")
+                return create_error_response(error)
             if not isinstance(color, (list, tuple)):
                 log_error("set_mesh_material_color: color must be a list")
                 return create_error_response("Invalid color format. Must be a list of 4 float values [R, G, B, A].")
@@ -473,6 +535,14 @@ def register_blueprint_tools(mcp: FastMCP):
         - Editor: Category, Interp, SimpleDisplay, NoClear, NonTransactional
         - MetaData: Tooltip, DisplayName, ClampMin, ClampMax, UIMin, UIMax, MakeEditWidget, AllowPrivateAccess, GetOptions, EditCondition, EditConditionHides, Units, TitleProperty, NoResetToDefault, HideAlphaChannel
         """
+        if err := _validate_bp_params("add_blueprint_variable", blueprint_name, blueprint_path):
+            return err
+        if error := validate_name(variable_name, "variable_name"):
+            log_error(f"add_blueprint_variable validation failed: {error}")
+            return create_error_response(error)
+        if error := validate_name(variable_type, "variable_type"):
+            log_error(f"add_blueprint_variable validation failed: {error}")
+            return create_error_response(error)
         params = {
             "blueprint_name": blueprint_name,
             "variable_name": variable_name,
@@ -500,6 +570,11 @@ def register_blueprint_tools(mcp: FastMCP):
         Uses SetSelfMember internally - no Target pin, references self automatically.
         For UClass properties, use add_property_get_set_node instead.
         """
+        if err := _validate_bp_params("add_blueprint_variable_node", blueprint_name, blueprint_path):
+            return err
+        if error := validate_name(variable_name, "variable_name"):
+            log_error(f"add_blueprint_variable_node validation failed: {error}")
+            return create_error_response(error)
         if err := validate_vectors("add_blueprint_variable_node", log_error, [
             (node_position, "node_position", validate_vector2)
         ], optional=True):
@@ -529,6 +604,11 @@ def register_blueprint_tools(mcp: FastMCP):
         node_position: List[float] = [0.0, 0.0]
     ) -> Dict[str, Any]:
         """Add engine/parent event override node. For user-defined events use add_custom_event_node."""
+        if err := _validate_bp_params("add_blueprint_event_node", blueprint_name, blueprint_path):
+            return err
+        if error := validate_name(event_name, "event_name"):
+            log_error(f"add_blueprint_event_node validation failed: {error}")
+            return create_error_response(error)
         if err := validate_vectors("add_blueprint_event_node", log_error, [
             (node_position, "node_position", validate_vector2)
         ]):
@@ -551,6 +631,11 @@ def register_blueprint_tools(mcp: FastMCP):
         graph_name: Optional[str] = None
     ) -> Dict[str, Any]:
         """Add custom event node. 'define' creates new event, 'call' invokes existing one."""
+        if err := _validate_bp_params("add_custom_event_node", blueprint_name, blueprint_path):
+            return err
+        if error := validate_name(event_name, "event_name"):
+            log_error(f"add_custom_event_node validation failed: {error}")
+            return create_error_response(error)
         if err := validate_vectors("add_custom_event_node", log_error, [
             (node_position, "node_position", validate_vector2)
         ], optional=True):
@@ -580,6 +665,12 @@ def register_blueprint_tools(mcp: FastMCP):
         auto_connect_self: bool = False
     ) -> Dict[str, Any]:
         """Add UFunction call node. Searches function in target_class first, then Blueprint's GeneratedClass."""
+        if err := _validate_bp_params("add_blueprint_function_node", blueprint_name, blueprint_path):
+            return err
+        for val, param_name in [(function_name, "function_name"), (target_class, "target_class")]:
+            if error := validate_name(val, param_name):
+                log_error(f"add_blueprint_function_node validation failed: {error}")
+                return create_error_response(error)
         if err := validate_vectors("add_blueprint_function_node", log_error, [
             (node_position, "node_position", validate_vector2)
         ]):
@@ -615,6 +706,11 @@ def register_blueprint_tools(mcp: FastMCP):
         with function_name='IsValid', target_class='KismetSystemLibrary' instead,
         then connect its output to a Branch node.
         """
+        if err := _validate_bp_params("add_blueprint_flow_control_node", blueprint_name, blueprint_path):
+            return err
+        if error := validate_name(control_type, "control_type"):
+            log_error(f"add_blueprint_flow_control_node validation failed: {error}")
+            return create_error_response(error)
         if err := validate_vectors("add_blueprint_flow_control_node", log_error, [
             (node_position, "node_position", validate_vector2)
         ], optional=True):
@@ -634,6 +730,11 @@ def register_blueprint_tools(mcp: FastMCP):
         blueprint_path: str
     ) -> Dict[str, Any]:
         """Create a function override graph. Returns entry node ID."""
+        if err := _validate_bp_params("add_function_override", blueprint_name, blueprint_path):
+            return err
+        if error := validate_name(function_name, "function_name"):
+            log_error(f"add_function_override validation failed: {error}")
+            return create_error_response(error)
         return get_unreal_client().execute_command("add_function_override", {
             "blueprint_name": blueprint_name,
             "function_name": function_name,
@@ -648,6 +749,11 @@ def register_blueprint_tools(mcp: FastMCP):
         node_position: Optional[List[float]] = None
     ) -> Dict[str, Any]:
         """Add Enhanced Input action event node."""
+        if err := _validate_bp_params("add_blueprint_input_action_node", blueprint_name, blueprint_path):
+            return err
+        if error := validate_name(action_name, "action_name"):
+            log_error(f"add_blueprint_input_action_node validation failed: {error}")
+            return create_error_response(error)
         if err := validate_vectors("add_blueprint_input_action_node", log_error, [
             (node_position, "node_position", validate_vector2)
         ], optional=True):
@@ -672,6 +778,8 @@ def register_blueprint_tools(mcp: FastMCP):
         Uses SetSelfMember internally - no Target pin, references self automatically.
         For accessing properties of this component, use add_property_get_set_node.
         """
+        if err := _validate_bp_params("add_component_getter_node", blueprint_name, blueprint_path, component_name):
+            return err
         if err := validate_vectors("add_component_getter_node", log_error, [
             (node_position, "node_position", validate_vector2)
         ], optional=True):
@@ -704,6 +812,12 @@ def register_blueprint_tools(mcp: FastMCP):
         2. Create property node with this tool
         3. Connect reference output to this node's Target pin
         """
+        if err := _validate_bp_params("add_property_get_set_node", blueprint_name, blueprint_path):
+            return err
+        for val, param_name in [(owner_class, "owner_class"), (property_name, "property_name")]:
+            if error := validate_name(val, param_name):
+                log_error(f"add_property_get_set_node validation failed: {error}")
+                return create_error_response(error)
         if err := validate_vectors("add_property_get_set_node", log_error, [
             (node_position, "node_position", validate_vector2)
         ], optional=True):
@@ -730,6 +844,8 @@ def register_blueprint_tools(mcp: FastMCP):
         graph_name: Optional[str] = None
     ) -> Dict[str, Any]:
         """Add a 'Get Self' node."""
+        if err := _validate_bp_params("add_blueprint_self_reference", blueprint_name, blueprint_path):
+            return err
         if err := validate_vectors("add_blueprint_self_reference", log_error, [
             (node_position, "node_position", validate_vector2)
         ], optional=True):
@@ -760,6 +876,11 @@ def register_blueprint_tools(mcp: FastMCP):
     ) -> Dict[str, Any]:
         """Add K2Node by class name. Use actor_class, object_class, struct_type,
         target_type, or enum param to set class pin for supported nodes."""
+        if err := _validate_bp_params("add_blueprint_generic_node", blueprint_name, blueprint_path):
+            return err
+        if error := validate_name(node_class, "node_class"):
+            log_error(f"add_blueprint_generic_node validation failed: {error}")
+            return create_error_response(error)
         if err := validate_vectors("add_blueprint_generic_node", log_error, [
             (node_position, "node_position", validate_vector2)
         ], optional=True):
@@ -805,6 +926,11 @@ def register_blueprint_tools(mcp: FastMCP):
         graph_name: Optional[str] = None
     ) -> Dict[str, Any]:
         """List nodes in a Blueprint graph with optional filters. Returns node_id, pins with connection status."""
+        if err := _validate_bp_params("list_blueprint_nodes", blueprint_name, blueprint_path):
+            return err
+        if error := validate_limit(limit, "limit"):
+            log_error(f"list_blueprint_nodes validation failed: {error}")
+            return create_error_response(error)
         params = {
             "blueprint_name": blueprint_name,
             "blueprint_path": blueprint_path,
@@ -848,6 +974,12 @@ def register_blueprint_tools(mcp: FastMCP):
         graph_name: Optional[str] = None
     ) -> Dict[str, Any]:
         """Connect two nodes by pin names. Use node_id or search criteria (node_title, event_name, node_class, newest)."""
+        if err := _validate_bp_params("connect_blueprint_nodes", blueprint_name, blueprint_path):
+            return err
+        for val, param_name in [(source_pin, "source_pin"), (target_pin, "target_pin")]:
+            if error := validate_name(val, param_name):
+                log_error(f"connect_blueprint_nodes validation failed: {error}")
+                return create_error_response(error)
         params: Dict[str, Any] = {
             "blueprint_name": blueprint_name,
             "source_pin": source_pin,
@@ -882,6 +1014,12 @@ def register_blueprint_tools(mcp: FastMCP):
         connect_data: bool = False
     ) -> Dict[str, Any]:
         """Auto-connect compatible pins between two nodes by GUID. Searches all graphs."""
+        if err := _validate_bp_params("connect_nodes", blueprint_name, blueprint_path):
+            return err
+        for val, param_name in [(source_node_id, "source_node_id"), (target_node_id, "target_node_id")]:
+            if error := validate_name(val, param_name):
+                log_error(f"connect_nodes validation failed: {error}")
+                return create_error_response(error)
         return get_unreal_client().execute_command("connect_nodes", {
             "blueprint_name": blueprint_name,
             "source_node_id": source_node_id,
@@ -900,6 +1038,12 @@ def register_blueprint_tools(mcp: FastMCP):
         value: Any
     ) -> Dict[str, Any]:
         """Set pin default value. Returns value_set and value_changed for verification."""
+        if err := _validate_bp_params("set_pin_default_value", blueprint_name, blueprint_path):
+            return err
+        for val, param_name in [(node_id, "node_id"), (pin_name, "pin_name")]:
+            if error := validate_name(val, param_name):
+                log_error(f"set_pin_default_value validation failed: {error}")
+                return create_error_response(error)
         return get_unreal_client().execute_command("set_pin_default_value", {
             "blueprint_name": blueprint_name,
             "node_id": node_id,
@@ -916,6 +1060,12 @@ def register_blueprint_tools(mcp: FastMCP):
         pin_name: str
     ) -> Dict[str, Any]:
         """Get current pin value. Useful for verifying set_pin_default_value results."""
+        if err := _validate_bp_params("get_pin_value", blueprint_name, blueprint_path):
+            return err
+        for val, param_name in [(node_id, "node_id"), (pin_name, "pin_name")]:
+            if error := validate_name(val, param_name):
+                log_error(f"get_pin_value validation failed: {error}")
+                return create_error_response(error)
         return get_unreal_client().execute_command("get_pin_value", {
             "blueprint_name": blueprint_name,
             "node_id": node_id,
@@ -932,6 +1082,12 @@ def register_blueprint_tools(mcp: FastMCP):
         value: Any
     ) -> Dict[str, Any]:
         """Set a node property by reflection. Supports nested paths (e.g., 'EventReference.MemberName')."""
+        if err := _validate_bp_params("set_node_property", blueprint_name, blueprint_path):
+            return err
+        for val, param_name in [(node_id, "node_id"), (property_path, "property_path")]:
+            if error := validate_name(val, param_name):
+                log_error(f"set_node_property validation failed: {error}")
+                return create_error_response(error)
         return get_unreal_client().execute_command("set_node_property", {
             "blueprint_name": blueprint_name,
             "node_id": node_id,
@@ -953,6 +1109,8 @@ def register_blueprint_tools(mcp: FastMCP):
         size: List[float] = [400.0, 200.0]
     ) -> Dict[str, Any]:
         """Add a comment box to Blueprint graph."""
+        if err := _validate_bp_params("add_comment_box", blueprint_name, blueprint_path):
+            return err
         if err := validate_vectors("add_comment_box", log_error, [
             (position, "position", validate_vector2),
             (size, "size", validate_vector2)
@@ -978,6 +1136,11 @@ def register_blueprint_tools(mcp: FastMCP):
         blueprint_path: str
     ) -> Dict[str, Any]:
         """Delete a node from Blueprint graph by node ID."""
+        if err := _validate_bp_params("delete_blueprint_node", blueprint_name, blueprint_path):
+            return err
+        if error := validate_name(node_id, "node_id"):
+            log_error(f"delete_blueprint_node validation failed: {error}")
+            return create_error_response(error)
         return get_unreal_client().execute_command("delete_blueprint_node", {
             "blueprint_name": blueprint_name,
             "node_id": node_id,
@@ -991,6 +1154,11 @@ def register_blueprint_tools(mcp: FastMCP):
         blueprint_path: str
     ) -> Dict[str, Any]:
         """Delete a variable from Blueprint."""
+        if err := _validate_bp_params("delete_blueprint_variable", blueprint_name, blueprint_path):
+            return err
+        if error := validate_name(variable_name, "variable_name"):
+            log_error(f"delete_blueprint_variable validation failed: {error}")
+            return create_error_response(error)
         return get_unreal_client().execute_command("delete_blueprint_variable", {
             "blueprint_name": blueprint_name,
             "variable_name": variable_name,
@@ -1004,6 +1172,8 @@ def register_blueprint_tools(mcp: FastMCP):
         blueprint_path: str
     ) -> Dict[str, Any]:
         """Delete a component from Blueprint."""
+        if err := _validate_bp_params("delete_component_from_blueprint", blueprint_name, blueprint_path, component_name):
+            return err
         return get_unreal_client().execute_command("delete_component_from_blueprint", {
             "blueprint_name": blueprint_name,
             "component_name": component_name,
@@ -1018,6 +1188,12 @@ def register_blueprint_tools(mcp: FastMCP):
         blueprint_path: str
     ) -> Dict[str, Any]:
         """Disconnect all links from a specific pin."""
+        if err := _validate_bp_params("disconnect_blueprint_nodes", blueprint_name, blueprint_path):
+            return err
+        for val, param_name in [(node_id, "node_id"), (pin_name, "pin_name")]:
+            if error := validate_name(val, param_name):
+                log_error(f"disconnect_blueprint_nodes validation failed: {error}")
+                return create_error_response(error)
         return get_unreal_client().execute_command("disconnect_blueprint_nodes", {
             "blueprint_name": blueprint_name,
             "node_id": node_id,
@@ -1036,6 +1212,11 @@ def register_blueprint_tools(mcp: FastMCP):
         blueprint_path: str
     ) -> Dict[str, Any]:
         """Add a pin to dynamic-pin nodes. Node must support AddInputPin."""
+        if err := _validate_bp_params("add_pin", blueprint_name, blueprint_path):
+            return err
+        if error := validate_name(node_id, "node_id"):
+            log_error(f"add_pin validation failed: {error}")
+            return create_error_response(error)
         return get_unreal_client().execute_command("add_pin", {
             "blueprint_name": blueprint_name,
             "node_id": node_id,
@@ -1050,6 +1231,12 @@ def register_blueprint_tools(mcp: FastMCP):
         blueprint_path: str
     ) -> Dict[str, Any]:
         """Delete a pin from dynamic-pin nodes. Node must support RemoveInputPin."""
+        if err := _validate_bp_params("delete_pin", blueprint_name, blueprint_path):
+            return err
+        for val, param_name in [(node_id, "node_id"), (pin_name, "pin_name")]:
+            if error := validate_name(val, param_name):
+                log_error(f"delete_pin validation failed: {error}")
+                return create_error_response(error)
         return get_unreal_client().execute_command("delete_pin", {
             "blueprint_name": blueprint_name,
             "node_id": node_id,
@@ -1103,6 +1290,12 @@ def register_blueprint_tools(mcp: FastMCP):
             [{"calculation_class": "MyDamageCalculation"}]
             [{"calculation_class": "/Game/GAS/Calculations/DamageCalc.DamageCalc_C"}]
         """
+        if error := validate_name(name, "name"):
+            log_error(f"create_gameplay_effect validation failed: {error}")
+            return create_error_response(error)
+        if error := validate_path(asset_path, "asset_path"):
+            log_error(f"create_gameplay_effect validation failed: {error}")
+            return create_error_response(error)
         params = {
             "name": name,
             "parent_class": parent_class,
@@ -1151,6 +1344,12 @@ def register_blueprint_tools(mcp: FastMCP):
         asset_path: str = "/Game/GAS/Abilities/"
     ) -> Dict[str, Any]:
         """Create a GameplayAbility Blueprint. Tags must be registered in project."""
+        if error := validate_name(name, "name"):
+            log_error(f"create_gameplay_ability validation failed: {error}")
+            return create_error_response(error)
+        if error := validate_path(asset_path, "asset_path"):
+            log_error(f"create_gameplay_ability validation failed: {error}")
+            return create_error_response(error)
         params = {
             "name": name,
             "parent_class": parent_class,
@@ -1196,6 +1395,12 @@ def register_blueprint_tools(mcp: FastMCP):
         graph_name: Optional[str] = None
     ) -> Dict[str, Any]:
         """Add UAbilityTask latent node. Requires task_class and factory function_name."""
+        if err := _validate_bp_params("add_ability_task_node", blueprint_name, blueprint_path):
+            return err
+        for val, param_name in [(task_class, "task_class"), (function_name, "function_name")]:
+            if error := validate_name(val, param_name):
+                log_error(f"add_ability_task_node validation failed: {error}")
+                return create_error_response(error)
         if err := validate_vectors("add_ability_task_node", log_error, [
             (node_position, "node_position", validate_vector2)
         ], optional=True):
@@ -1224,6 +1429,12 @@ def register_blueprint_tools(mcp: FastMCP):
         max_results: int = 20
     ) -> Dict[str, Any]:
         """Search functions by keyword. Useful for finding overridable functions or API discovery."""
+        if error := validate_name(keyword, "keyword"):
+            log_error(f"search_functions validation failed: {error}")
+            return create_error_response(error)
+        if error := validate_limit(max_results, "max_results"):
+            log_error(f"search_functions validation failed: {error}")
+            return create_error_response(error)
         return get_unreal_client().execute_command("search_functions", {
             "keyword": keyword,
             "class_filter": class_filter,
@@ -1237,6 +1448,9 @@ def register_blueprint_tools(mcp: FastMCP):
         callable_only: bool = True
     ) -> Dict[str, Any]:
         """Get all functions of a class. Useful for exploring class capabilities."""
+        if error := validate_name(class_name, "class_name"):
+            log_error(f"get_class_functions validation failed: {error}")
+            return create_error_response(error)
         return get_unreal_client().execute_command("get_class_functions", {
             "class_name": class_name,
             "include_inherited": include_inherited,
@@ -1250,6 +1464,9 @@ def register_blueprint_tools(mcp: FastMCP):
         blueprint_visible_only: bool = True
     ) -> Dict[str, Any]:
         """Get properties of a UClass. Use with add_property_get_set_node."""
+        if error := validate_name(class_name, "class_name"):
+            log_error(f"get_class_properties validation failed: {error}")
+            return create_error_response(error)
         return get_unreal_client().execute_command("get_class_properties", {
             "class_name": class_name,
             "include_inherited": include_inherited,
@@ -1262,6 +1479,8 @@ def register_blueprint_tools(mcp: FastMCP):
         blueprint_path: str
     ) -> Dict[str, Any]:
         """Get variables in Blueprint's Variables panel. Use with add_blueprint_variable_node."""
+        if err := _validate_bp_params("get_blueprint_variables", blueprint_name, blueprint_path):
+            return err
         return get_unreal_client().execute_command("get_blueprint_variables", {
             "blueprint_name": blueprint_name,
             "blueprint_path": blueprint_path
@@ -1279,6 +1498,8 @@ def register_blueprint_tools(mcp: FastMCP):
         detailed_pins: bool = True
     ) -> Dict[str, Any]:
         """Analyze Blueprint structure. Returns graphs, nodes, components, variables, overridable_functions."""
+        if err := _validate_bp_params("analyze_blueprint", blueprint_name, blueprint_path):
+            return err
         return get_unreal_client().execute_command("analyze_blueprint", {
             "blueprint_name": blueprint_name,
             "include_all_graphs": include_all_graphs,
@@ -1292,6 +1513,8 @@ def register_blueprint_tools(mcp: FastMCP):
         blueprint_path: str
     ) -> Dict[str, Any]:
         """List all graphs in a Blueprint (Ubergraph, Function, Macro, Delegate)."""
+        if err := _validate_bp_params("list_graphs", blueprint_name, blueprint_path):
+            return err
         return get_unreal_client().execute_command("list_graphs", {
             "blueprint_name": blueprint_name,
             "blueprint_path": blueprint_path
@@ -1308,6 +1531,15 @@ def register_blueprint_tools(mcp: FastMCP):
         asset_path: str = "/Game/Blueprints/"
     ) -> Dict[str, Any]:
         """Create a child Blueprint inheriting from an existing Blueprint."""
+        if error := validate_name(name, "name"):
+            log_error(f"create_child_blueprint validation failed: {error}")
+            return create_error_response(error)
+        if error := validate_name(parent_blueprint, "parent_blueprint"):
+            log_error(f"create_child_blueprint validation failed: {error}")
+            return create_error_response(error)
+        if error := validate_path(asset_path, "asset_path"):
+            log_error(f"create_child_blueprint validation failed: {error}")
+            return create_error_response(error)
         return get_unreal_client().execute_command("create_child_blueprint", {
             "name": name,
             "parent_blueprint": parent_blueprint,
@@ -1324,6 +1556,9 @@ def register_blueprint_tools(mcp: FastMCP):
         limit: int = 50
     ) -> Dict[str, Any]:
         """List all AttributeSet classes in the project."""
+        if error := validate_limit(limit, "limit"):
+            log_error(f"list_attribute_sets validation failed: {error}")
+            return create_error_response(error)
         return get_unreal_client().execute_command("list_attribute_sets", {
             "include_engine": include_engine,
             "limit": int(limit)
@@ -1334,6 +1569,9 @@ def register_blueprint_tools(mcp: FastMCP):
         attribute_set_name: str
     ) -> Dict[str, Any]:
         """Get attributes of a specific AttributeSet class."""
+        if error := validate_name(attribute_set_name, "attribute_set_name"):
+            log_error(f"get_attribute_set_info validation failed: {error}")
+            return create_error_response(error)
         return get_unreal_client().execute_command("get_attribute_set_info", {
             "attribute_set_name": attribute_set_name
         })
@@ -1349,6 +1587,9 @@ def register_blueprint_tools(mcp: FastMCP):
         limit: int = 30
     ) -> Dict[str, Any]:
         """Discover project GAS assets. Call FIRST when creating any GAS ability."""
+        if error := validate_limit(limit, "limit"):
+            log_error(f"explore_gas_context validation failed: {error}")
+            return create_error_response(error)
         client = get_unreal_client()
         result: Dict[str, Any] = {"status": "success"}
 
@@ -1420,6 +1661,8 @@ def register_blueprint_tools(mcp: FastMCP):
         auto_layout: bool = True
     ) -> Dict[str, Any]:
         """Preferred tool for GameplayAbility Blueprint creation. Builds entire graph (nodes, connections, pin defaults) atomically in one call with auto-layout."""
+        if err := _validate_bp_params("build_ability_graph", blueprint_name, blueprint_path):
+            return err
         nodes_data = []
         for i, node in enumerate(nodes):
             try:

@@ -7,6 +7,7 @@ import uuid
 from typing import Dict, Any, Set, Optional
 from ..utils import log_info, log_error
 
+
 class ActorNameManager:
     """Manages unique actor names across MCP functions."""
 
@@ -14,7 +15,33 @@ class ActorNameManager:
         self._known_actors: Set[str] = set()
         self._session_id = str(int(time.time()))[-6:]
         self._actor_counters: Dict[str, int] = {}
+        self._cache_initialized = False
         log_info(f"ActorNameManager initialized with session ID: {self._session_id}")
+
+    def _ensure_cache(self, unreal_connection=None):
+        """Bulk-load all actor names from Unreal on first use."""
+        if self._cache_initialized or not unreal_connection:
+            return
+        try:
+            response = unreal_connection.send_command("list_level_actors", {
+                "include_level_instances": True
+            })
+            if response and response.get("status") == "success":
+                result = response.get("result", {})
+                actors = result.get("actors", []) if isinstance(result, dict) else []
+                for actor in actors:
+                    if isinstance(actor, dict) and actor.get("name"):
+                        self._known_actors.add(actor["name"])
+                log_info(f"ActorNameManager cached {len(self._known_actors)} actor names")
+            self._cache_initialized = True
+        except Exception as e:
+            log_error(f"Failed to bulk-load actor names: {e}")
+            # Don't set _cache_initialized so it retries next time
+
+    def invalidate_cache(self):
+        """Force cache refresh on next use."""
+        self._cache_initialized = False
+        self._known_actors.clear()
 
     def generate_unique_name(self, base_name: str, unreal_connection=None) -> str:
         """Generate a unique actor name based on the desired base name."""
@@ -22,11 +49,13 @@ class ActorNameManager:
         if not base_name:
             base_name = f"Actor_{self._session_id}"
 
-        if not self._actor_exists(base_name, unreal_connection):
+        self._ensure_cache(unreal_connection)
+
+        if not self._actor_exists(base_name):
             return base_name
 
         session_name = f"{base_name}_{self._session_id}"
-        if not self._actor_exists(session_name, unreal_connection):
+        if not self._actor_exists(session_name):
             return session_name
 
         counter_key = base_name
@@ -36,7 +65,7 @@ class ActorNameManager:
         for _ in range(1000):
             self._actor_counters[counter_key] += 1
             counter_name = f"{base_name}_{self._actor_counters[counter_key]}"
-            if not self._actor_exists(counter_name, unreal_connection):
+            if not self._actor_exists(counter_name):
                 return counter_name
 
         unique_suffix = str(uuid.uuid4())[:8]
@@ -45,38 +74,20 @@ class ActorNameManager:
         log_info(f"Generated unique name: {base_name} -> {final_name}")
         return final_name
 
-    def _actor_exists(self, name: str, unreal_connection=None) -> bool:
-        """Check if an actor with the given name exists.
+    def _actor_exists(self, name: str) -> bool:
+        """Check if an actor with the given name exists in cache.
 
         Returns True if:
         1. Exact match found in cache
-        2. Exact match found in Unreal Engine
-        3. An actor with name starting with 'name' exists (name collision prevention)
+        2. An actor with name starting with 'name' exists (prefix collision prevention)
         """
         if name in self._known_actors:
             return True
 
-        if unreal_connection:
-            try:
-                response = unreal_connection.send_command("search_actors", {"pattern": name})
-                if response and response.get("status") == "success":
-                    result = response.get("result", {})
-                    actors = result.get("actors", []) if isinstance(result, dict) else []
-
-                    if isinstance(actors, list):
-                        # First pass: exact match - cache the name
-                        for actor in actors:
-                            if isinstance(actor, dict) and actor.get("name") == name:
-                                self._known_actors.add(name)
-                                return True
-                        # Second pass: prefix match - don't cache (may cause false positives)
-                        # This prevents naming collisions like "Actor" when "Actor_1" exists
-                        for actor in actors:
-                            if isinstance(actor, dict) and actor.get("name", "").startswith(name):
-                                # Return True but don't cache - next query will re-check
-                                return True
-            except Exception as e:
-                log_error(f"Error checking actor existence for '{name}': {e}")
+        # Prefix match - prevents naming collisions like "Actor" when "Actor_1" exists
+        for known in self._known_actors:
+            if known.startswith(name):
+                return True
 
         return False
 
