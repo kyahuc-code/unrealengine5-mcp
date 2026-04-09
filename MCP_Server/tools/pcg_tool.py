@@ -10,8 +10,22 @@ from ..unreal_client import get_unreal_client
 from ..utils import (
     log_info, log_error,
     validate_vector2, ensure_floats, create_error_response,
-    validate_vectors
+    validate_vectors,
+    validate_name, validate_path
 )
+
+
+def _validate_pcg_params(func_name: str, graph_name: str = None, graph_path: str = None) -> Optional[Dict[str, Any]]:
+    """Validate common PCG parameters. Returns error response or None."""
+    if graph_name is not None:
+        if error := validate_name(graph_name, "graph_name"):
+            log_error(f"{func_name} validation failed: {error}")
+            return create_error_response(error)
+    if graph_path is not None:
+        if error := validate_path(graph_path, "graph_path"):
+            log_error(f"{func_name} validation failed: {error}")
+            return create_error_response(error)
+    return None
 
 
 def register_pcg_tools(mcp: FastMCP):
@@ -28,6 +42,12 @@ def register_pcg_tools(mcp: FastMCP):
     ) -> Dict[str, Any]:
         """Create a PCG Graph asset."""
         try:
+            if error := validate_name(name, "name"):
+                log_error(f"create_pcg_graph validation failed: {error}")
+                return create_error_response(error)
+            if error := validate_path(path, "path"):
+                log_error(f"create_pcg_graph validation failed: {error}")
+                return create_error_response(error)
             return get_unreal_client().execute_command("create_pcg_graph", {
                 "name": name,
                 "path": path
@@ -43,6 +63,8 @@ def register_pcg_tools(mcp: FastMCP):
     ) -> Dict[str, Any]:
         """Analyze PCG Graph structure. Returns all nodes with their pins and connections."""
         try:
+            if err := _validate_pcg_params("analyze_pcg_graph", graph_name, graph_path):
+                return err
             return get_unreal_client().execute_command("analyze_pcg_graph", {
                 "graph_name": graph_name,
                 "graph_path": graph_path
@@ -61,6 +83,15 @@ def register_pcg_tools(mcp: FastMCP):
     ) -> Dict[str, Any]:
         """Assign a PCG Graph to a PCGComponent in a Blueprint."""
         try:
+            if err := _validate_pcg_params("set_pcg_graph_to_component", graph_name, graph_path):
+                return err
+            for val, param_name in [(blueprint_name, "blueprint_name"), (component_name, "component_name")]:
+                if error := validate_name(val, param_name):
+                    log_error(f"set_pcg_graph_to_component validation failed: {error}")
+                    return create_error_response(error)
+            if error := validate_path(blueprint_path, "blueprint_path"):
+                log_error(f"set_pcg_graph_to_component validation failed: {error}")
+                return create_error_response(error)
             return get_unreal_client().execute_command("set_pcg_graph_to_component", {
                 "blueprint_name": blueprint_name,
                 "component_name": component_name,
@@ -85,6 +116,8 @@ def register_pcg_tools(mcp: FastMCP):
     ) -> Dict[str, Any]:
         """Add a sampler node."""
         try:
+            if err := _validate_pcg_params("add_pcg_sampler_node", graph_name, graph_path):
+                return err
             if err := validate_vectors("add_pcg_sampler_node", log_error, [
                 (node_position, "node_position", validate_vector2)
             ]):
@@ -109,6 +142,8 @@ def register_pcg_tools(mcp: FastMCP):
     ) -> Dict[str, Any]:
         """Add a filter node."""
         try:
+            if err := _validate_pcg_params("add_pcg_filter_node", graph_name, graph_path):
+                return err
             if err := validate_vectors("add_pcg_filter_node", log_error, [
                 (node_position, "node_position", validate_vector2)
             ]):
@@ -133,6 +168,8 @@ def register_pcg_tools(mcp: FastMCP):
     ) -> Dict[str, Any]:
         """Add a transform node."""
         try:
+            if err := _validate_pcg_params("add_pcg_transform_node", graph_name, graph_path):
+                return err
             if err := validate_vectors("add_pcg_transform_node", log_error, [
                 (node_position, "node_position", validate_vector2)
             ]):
@@ -157,6 +194,8 @@ def register_pcg_tools(mcp: FastMCP):
     ) -> Dict[str, Any]:
         """Add a spawner node."""
         try:
+            if err := _validate_pcg_params("add_pcg_spawner_node", graph_name, graph_path):
+                return err
             if err := validate_vectors("add_pcg_spawner_node", log_error, [
                 (node_position, "node_position", validate_vector2)
             ]):
@@ -181,6 +220,8 @@ def register_pcg_tools(mcp: FastMCP):
     ) -> Dict[str, Any]:
         """Add an attribute node."""
         try:
+            if err := _validate_pcg_params("add_pcg_attribute_node", graph_name, graph_path):
+                return err
             if err := validate_vectors("add_pcg_attribute_node", log_error, [
                 (node_position, "node_position", validate_vector2)
             ]):
@@ -205,6 +246,8 @@ def register_pcg_tools(mcp: FastMCP):
     ) -> Dict[str, Any]:
         """Add a flow control node."""
         try:
+            if err := _validate_pcg_params("add_pcg_flow_control_node", graph_name, graph_path):
+                return err
             if err := validate_vectors("add_pcg_flow_control_node", log_error, [
                 (node_position, "node_position", validate_vector2)
             ]):
@@ -229,6 +272,11 @@ def register_pcg_tools(mcp: FastMCP):
     ) -> Dict[str, Any]:
         """Add any PCG node by settings class name."""
         try:
+            if err := _validate_pcg_params("add_pcg_generic_node", graph_name, graph_path):
+                return err
+            if error := validate_name(node_class, "node_class"):
+                log_error(f"add_pcg_generic_node validation failed: {error}")
+                return create_error_response(error)
             if err := validate_vectors("add_pcg_generic_node", log_error, [
                 (node_position, "node_position", validate_vector2)
             ]):
@@ -257,6 +305,8 @@ def register_pcg_tools(mcp: FastMCP):
     ) -> Dict[str, Any]:
         """List nodes in PCG Graph with optional filters by name or settings class."""
         try:
+            if err := _validate_pcg_params("list_pcg_nodes", graph_name, graph_path):
+                return err
             return get_unreal_client().execute_command("list_pcg_nodes", {
                 "graph_name": graph_name,
                 "query": query,
@@ -282,6 +332,12 @@ def register_pcg_tools(mcp: FastMCP):
     ) -> Dict[str, Any]:
         """Connect two PCG nodes. If pins not specified, uses first available."""
         try:
+            if err := _validate_pcg_params("connect_pcg_nodes", graph_name, graph_path):
+                return err
+            for val, param_name in [(source_node_id, "source_node_id"), (target_node_id, "target_node_id")]:
+                if error := validate_name(val, param_name):
+                    log_error(f"connect_pcg_nodes validation failed: {error}")
+                    return create_error_response(error)
             return get_unreal_client().execute_command("connect_pcg_nodes", {
                 "graph_name": graph_name,
                 "source_node_id": source_node_id,
@@ -303,6 +359,12 @@ def register_pcg_tools(mcp: FastMCP):
     ) -> Dict[str, Any]:
         """Disconnect all edges from a specific pin."""
         try:
+            if err := _validate_pcg_params("disconnect_pcg_nodes", graph_name, graph_path):
+                return err
+            for val, param_name in [(node_id, "node_id"), (pin_name, "pin_name")]:
+                if error := validate_name(val, param_name):
+                    log_error(f"disconnect_pcg_nodes validation failed: {error}")
+                    return create_error_response(error)
             return get_unreal_client().execute_command("disconnect_pcg_nodes", {
                 "graph_name": graph_name,
                 "node_id": node_id,
@@ -325,6 +387,11 @@ def register_pcg_tools(mcp: FastMCP):
     ) -> Dict[str, Any]:
         """Delete a node from PCG Graph."""
         try:
+            if err := _validate_pcg_params("delete_pcg_node", graph_name, graph_path):
+                return err
+            if error := validate_name(node_id, "node_id"):
+                log_error(f"delete_pcg_node validation failed: {error}")
+                return create_error_response(error)
             return get_unreal_client().execute_command("delete_pcg_node", {
                 "graph_name": graph_name,
                 "node_id": node_id,

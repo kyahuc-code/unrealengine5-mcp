@@ -8,7 +8,12 @@ from .validators import (
     validate_color,
     ensure_floats,
     create_error_response,
-    validate_vectors
+    validate_vectors,
+    validate_name,
+    validate_path,
+    validate_limit,
+    validate_positive_float,
+    validate_non_negative_int
 )
 
 
@@ -48,5 +53,10 @@ __all__ = [
     'validate_color',
     'ensure_floats',
     'create_error_response',
-    'validate_vectors'
+    'validate_vectors',
+    'validate_name',
+    'validate_path',
+    'validate_limit',
+    'validate_positive_float',
+    'validate_non_negative_int'
 ]
