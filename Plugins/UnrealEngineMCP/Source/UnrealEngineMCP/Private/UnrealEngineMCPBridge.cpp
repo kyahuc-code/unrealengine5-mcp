@@ -174,7 +174,12 @@ static bool IsReadOnlyCommand(const FString& CommandType)
 		   CommandType == TEXT("analyze_pcg_graph") ||
 		   CommandType == TEXT("list_pcg_nodes") ||
 		   CommandType == TEXT("analyze_widget_blueprint") ||
-		   CommandType == TEXT("list_widget_children");
+		   CommandType == TEXT("list_widget_children") ||
+		   CommandType == TEXT("list_widget_events") ||
+		   CommandType == TEXT("list_widget_animations") ||
+		   CommandType == TEXT("analyze_widget_hierarchy") ||
+		   CommandType == TEXT("get_widget_type_info") ||
+		   CommandType == TEXT("search_widgets");
 }
 
 FString UUnrealEngineMCPBridge::ExecuteCommandInternal(const FString& CommandType, const TSharedPtr<FJsonObject>& Params)
@@ -360,7 +365,24 @@ FString UUnrealEngineMCPBridge::ExecuteCommandInternal(const FString& CommandTyp
 				 CommandType == TEXT("remove_widget") ||
 				 CommandType == TEXT("set_widget_property") ||
 				 CommandType == TEXT("set_widget_slot") ||
-				 CommandType == TEXT("list_widget_children"))
+				 CommandType == TEXT("list_widget_children") ||
+				 CommandType == TEXT("bind_widget_event") ||
+				 CommandType == TEXT("unbind_widget_event") ||
+				 CommandType == TEXT("list_widget_events") ||
+				 CommandType == TEXT("add_widget_function_node") ||
+				 CommandType == TEXT("set_widget_text") ||
+				 CommandType == TEXT("set_widget_color") ||
+				 CommandType == TEXT("set_widget_brush") ||
+				 CommandType == TEXT("set_widget_font") ||
+				 CommandType == TEXT("set_widget_padding") ||
+				 CommandType == TEXT("create_widget_animation") ||
+				 CommandType == TEXT("play_animation_node") ||
+				 CommandType == TEXT("list_widget_animations") ||
+				 CommandType == TEXT("build_widget_tree") ||
+				 CommandType == TEXT("clone_widget_subtree") ||
+				 CommandType == TEXT("analyze_widget_hierarchy") ||
+				 CommandType == TEXT("get_widget_type_info") ||
+				 CommandType == TEXT("search_widgets"))
 		{
 			ResultJson = WidgetCommandHandler->HandleCommand(CommandType, Params);
 		}
