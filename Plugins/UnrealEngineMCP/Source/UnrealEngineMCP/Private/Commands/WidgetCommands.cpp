@@ -26,6 +26,19 @@
 #include "Components/WrapBox.h"
 #include "Components/ScaleBox.h"
 #include "Components/ListView.h"
+#include "Components/ComboBoxString.h"
+#include "Components/RichTextBlock.h"
+#include "Components/MultiLineEditableTextBox.h"
+#include "Components/WidgetSwitcher.h"
+#include "Components/UniformGridPanel.h"
+#include "Components/UniformGridSlot.h"
+#include "Components/BackgroundBlur.h"
+#include "Components/Throbber.h"
+#include "Components/ExpandableArea.h"
+#include "Components/RetainerBox.h"
+#include "Components/InvalidationBox.h"
+#include "Components/SafeZone.h"
+#include "Components/NamedSlot.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "EditorAssetLibrary.h"
 #include "Kismet2/KismetEditorUtilities.h"
@@ -150,6 +163,32 @@ TSharedPtr<FJsonObject> FWidgetCommands::HandleCommand(const FString& CommandTyp
 	else if (CommandType == TEXT("search_widgets"))
 	{
 		return HandleSearchWidgets(Params);
+	}
+	// Tier 6: State & Layout
+	else if (CommandType == TEXT("set_widget_visibility"))
+	{
+		return HandleSetWidgetVisibility(Params);
+	}
+	else if (CommandType == TEXT("set_widget_enabled"))
+	{
+		return HandleSetWidgetEnabled(Params);
+	}
+	else if (CommandType == TEXT("set_box_slot"))
+	{
+		return HandleSetBoxSlot(Params);
+	}
+	else if (CommandType == TEXT("set_grid_slot"))
+	{
+		return HandleSetGridSlot(Params);
+	}
+	else if (CommandType == TEXT("set_widget_transform"))
+	{
+		return HandleSetWidgetTransform(Params);
+	}
+	// Tier 7: Advanced
+	else if (CommandType == TEXT("set_widget_tooltip"))
+	{
+		return HandleSetWidgetTooltip(Params);
 	}
 
 	return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Unknown widget command: %s"), *CommandType));
@@ -311,6 +350,19 @@ TSharedPtr<FJsonObject> FWidgetCommands::HandleAddWidget(const TSharedPtr<FJsonO
 		WidgetTypeMap.Add(TEXT("GridPanel"), UGridPanel::StaticClass());
 		WidgetTypeMap.Add(TEXT("WrapBox"), UWrapBox::StaticClass());
 		WidgetTypeMap.Add(TEXT("ScaleBox"), UScaleBox::StaticClass());
+		WidgetTypeMap.Add(TEXT("ComboBoxString"), UComboBoxString::StaticClass());
+		WidgetTypeMap.Add(TEXT("RichTextBlock"), URichTextBlock::StaticClass());
+		WidgetTypeMap.Add(TEXT("MultiLineEditableTextBox"), UMultiLineEditableTextBox::StaticClass());
+		WidgetTypeMap.Add(TEXT("WidgetSwitcher"), UWidgetSwitcher::StaticClass());
+		WidgetTypeMap.Add(TEXT("UniformGridPanel"), UUniformGridPanel::StaticClass());
+		WidgetTypeMap.Add(TEXT("BackgroundBlur"), UBackgroundBlur::StaticClass());
+		WidgetTypeMap.Add(TEXT("Throbber"), UThrobber::StaticClass());
+		WidgetTypeMap.Add(TEXT("CircularThrobber"), UCircularThrobber::StaticClass());
+		WidgetTypeMap.Add(TEXT("ExpandableArea"), UExpandableArea::StaticClass());
+		WidgetTypeMap.Add(TEXT("RetainerBox"), URetainerBox::StaticClass());
+		WidgetTypeMap.Add(TEXT("InvalidationBox"), UInvalidationBox::StaticClass());
+		WidgetTypeMap.Add(TEXT("SafeZone"), USafeZone::StaticClass());
+		WidgetTypeMap.Add(TEXT("NamedSlot"), UNamedSlot::StaticClass());
 	}
 
 	UClass* WidgetClass = nullptr;
@@ -712,6 +764,19 @@ UClass* FWidgetCommands::ResolveWidgetClass(const FString& WidgetType)
 		WidgetTypeMap.Add(TEXT("GridPanel"), UGridPanel::StaticClass());
 		WidgetTypeMap.Add(TEXT("WrapBox"), UWrapBox::StaticClass());
 		WidgetTypeMap.Add(TEXT("ScaleBox"), UScaleBox::StaticClass());
+		WidgetTypeMap.Add(TEXT("ComboBoxString"), UComboBoxString::StaticClass());
+		WidgetTypeMap.Add(TEXT("RichTextBlock"), URichTextBlock::StaticClass());
+		WidgetTypeMap.Add(TEXT("MultiLineEditableTextBox"), UMultiLineEditableTextBox::StaticClass());
+		WidgetTypeMap.Add(TEXT("WidgetSwitcher"), UWidgetSwitcher::StaticClass());
+		WidgetTypeMap.Add(TEXT("UniformGridPanel"), UUniformGridPanel::StaticClass());
+		WidgetTypeMap.Add(TEXT("BackgroundBlur"), UBackgroundBlur::StaticClass());
+		WidgetTypeMap.Add(TEXT("Throbber"), UThrobber::StaticClass());
+		WidgetTypeMap.Add(TEXT("CircularThrobber"), UCircularThrobber::StaticClass());
+		WidgetTypeMap.Add(TEXT("ExpandableArea"), UExpandableArea::StaticClass());
+		WidgetTypeMap.Add(TEXT("RetainerBox"), URetainerBox::StaticClass());
+		WidgetTypeMap.Add(TEXT("InvalidationBox"), UInvalidationBox::StaticClass());
+		WidgetTypeMap.Add(TEXT("SafeZone"), USafeZone::StaticClass());
+		WidgetTypeMap.Add(TEXT("NamedSlot"), UNamedSlot::StaticClass());
 	}
 	if (UClass** Found = WidgetTypeMap.Find(WidgetType))
 	{
@@ -1371,12 +1436,45 @@ UWidget* FWidgetCommands::BuildWidgetRecursive(UWidgetBlueprint* WBP, const TSha
 
 	Registry.Add(Name, NewWidget);
 
+	// Helper lambdas for alignment parsing
+	auto ParseHAlign = [](const FString& Str) -> EHorizontalAlignment {
+		if (Str == TEXT("Left")) return HAlign_Left;
+		if (Str == TEXT("Center")) return HAlign_Center;
+		if (Str == TEXT("Right")) return HAlign_Right;
+		return HAlign_Fill;
+	};
+	auto ParseVAlign = [](const FString& Str) -> EVerticalAlignment {
+		if (Str == TEXT("Top")) return VAlign_Top;
+		if (Str == TEXT("Center")) return VAlign_Center;
+		if (Str == TEXT("Bottom")) return VAlign_Bottom;
+		return VAlign_Fill;
+	};
+	auto ParsePadding = [](const TSharedPtr<FJsonObject>& Obj, const FString& Key) -> FMargin {
+		FMargin M(0);
+		if (!Obj->HasField(Key)) return M;
+		const TSharedPtr<FJsonValue>& Val = Obj->Values[Key];
+		if (Val->Type == EJson::Number) { M = FMargin(Val->AsNumber()); }
+		else if (Val->Type == EJson::Object) {
+			TSharedPtr<FJsonObject> PO = Val->AsObject();
+			M.Left = PO->HasField(TEXT("left")) ? PO->GetNumberField(TEXT("left")) : 0;
+			M.Top = PO->HasField(TEXT("top")) ? PO->GetNumberField(TEXT("top")) : 0;
+			M.Right = PO->HasField(TEXT("right")) ? PO->GetNumberField(TEXT("right")) : 0;
+			M.Bottom = PO->HasField(TEXT("bottom")) ? PO->GetNumberField(TEXT("bottom")) : 0;
+		}
+		else if (Val->Type == EJson::Array) {
+			const TArray<TSharedPtr<FJsonValue>>& A = Val->AsArray();
+			if (A.Num() >= 4) { M.Left = A[0]->AsNumber(); M.Top = A[1]->AsNumber(); M.Right = A[2]->AsNumber(); M.Bottom = A[3]->AsNumber(); }
+		}
+		return M;
+	};
+
 	// Apply slot properties
 	if (WidgetSpec->HasField(TEXT("slot")) && NewWidget->Slot)
 	{
 		const TSharedPtr<FJsonObject>* SlotObj;
 		if (WidgetSpec->TryGetObjectField(TEXT("slot"), SlotObj))
 		{
+			// Canvas Panel Slot
 			if (UCanvasPanelSlot* CanvasSlot = Cast<UCanvasPanelSlot>(NewWidget->Slot))
 			{
 				if ((*SlotObj)->HasField(TEXT("position")))
@@ -1385,11 +1483,180 @@ UWidget* FWidgetCommands::BuildWidgetRecursive(UWidgetBlueprint* WBP, const TSha
 					CanvasSlot->SetSize(FCommonUtils::GetVector2DFromJson(*SlotObj, TEXT("size")));
 				if ((*SlotObj)->HasField(TEXT("z_order")))
 					CanvasSlot->SetZOrder((*SlotObj)->GetIntegerField(TEXT("z_order")));
+				if ((*SlotObj)->HasField(TEXT("anchors")))
+				{
+					const TSharedPtr<FJsonObject>* AnchObj;
+					if ((*SlotObj)->TryGetObjectField(TEXT("anchors"), AnchObj))
+					{
+						FAnchors Anchors;
+						Anchors.Minimum.X = (*AnchObj)->HasField(TEXT("min_x")) ? (*AnchObj)->GetNumberField(TEXT("min_x")) : 0;
+						Anchors.Minimum.Y = (*AnchObj)->HasField(TEXT("min_y")) ? (*AnchObj)->GetNumberField(TEXT("min_y")) : 0;
+						Anchors.Maximum.X = (*AnchObj)->HasField(TEXT("max_x")) ? (*AnchObj)->GetNumberField(TEXT("max_x")) : Anchors.Minimum.X;
+						Anchors.Maximum.Y = (*AnchObj)->HasField(TEXT("max_y")) ? (*AnchObj)->GetNumberField(TEXT("max_y")) : Anchors.Minimum.Y;
+						CanvasSlot->SetAnchors(Anchors);
+					}
+				}
+				if ((*SlotObj)->HasField(TEXT("alignment")))
+					CanvasSlot->SetAlignment(FCommonUtils::GetVector2DFromJson(*SlotObj, TEXT("alignment")));
+				if ((*SlotObj)->HasField(TEXT("auto_size")))
+					CanvasSlot->SetAutoSize((*SlotObj)->GetBoolField(TEXT("auto_size")));
+			}
+			// VerticalBox Slot
+			else if (UVerticalBoxSlot* VSlot = Cast<UVerticalBoxSlot>(NewWidget->Slot))
+			{
+				if ((*SlotObj)->HasField(TEXT("h_align")))
+					VSlot->SetHorizontalAlignment(ParseHAlign((*SlotObj)->GetStringField(TEXT("h_align"))));
+				if ((*SlotObj)->HasField(TEXT("v_align")))
+					VSlot->SetVerticalAlignment(ParseVAlign((*SlotObj)->GetStringField(TEXT("v_align"))));
+				if ((*SlotObj)->HasField(TEXT("padding")))
+					VSlot->SetPadding(ParsePadding(*SlotObj, TEXT("padding")));
+				if ((*SlotObj)->HasField(TEXT("size_rule")))
+				{
+					FSlateChildSize Size;
+					FString SizeRule = (*SlotObj)->GetStringField(TEXT("size_rule"));
+					if (SizeRule == TEXT("Auto")) Size.SizeRule = ESlateSizeRule::Automatic;
+					else { Size.SizeRule = ESlateSizeRule::Fill; Size.Value = (*SlotObj)->HasField(TEXT("fill_weight")) ? (*SlotObj)->GetNumberField(TEXT("fill_weight")) : 1.0f; }
+					VSlot->SetSize(Size);
+				}
+			}
+			// HorizontalBox Slot
+			else if (UHorizontalBoxSlot* HSlot = Cast<UHorizontalBoxSlot>(NewWidget->Slot))
+			{
+				if ((*SlotObj)->HasField(TEXT("h_align")))
+					HSlot->SetHorizontalAlignment(ParseHAlign((*SlotObj)->GetStringField(TEXT("h_align"))));
+				if ((*SlotObj)->HasField(TEXT("v_align")))
+					HSlot->SetVerticalAlignment(ParseVAlign((*SlotObj)->GetStringField(TEXT("v_align"))));
+				if ((*SlotObj)->HasField(TEXT("padding")))
+					HSlot->SetPadding(ParsePadding(*SlotObj, TEXT("padding")));
+				if ((*SlotObj)->HasField(TEXT("size_rule")))
+				{
+					FSlateChildSize Size;
+					FString SizeRule = (*SlotObj)->GetStringField(TEXT("size_rule"));
+					if (SizeRule == TEXT("Auto")) Size.SizeRule = ESlateSizeRule::Automatic;
+					else { Size.SizeRule = ESlateSizeRule::Fill; Size.Value = (*SlotObj)->HasField(TEXT("fill_weight")) ? (*SlotObj)->GetNumberField(TEXT("fill_weight")) : 1.0f; }
+					HSlot->SetSize(Size);
+				}
+			}
+			// Overlay Slot
+			else if (UOverlaySlot* OSlot = Cast<UOverlaySlot>(NewWidget->Slot))
+			{
+				if ((*SlotObj)->HasField(TEXT("h_align")))
+					OSlot->SetHorizontalAlignment(ParseHAlign((*SlotObj)->GetStringField(TEXT("h_align"))));
+				if ((*SlotObj)->HasField(TEXT("v_align")))
+					OSlot->SetVerticalAlignment(ParseVAlign((*SlotObj)->GetStringField(TEXT("v_align"))));
+				if ((*SlotObj)->HasField(TEXT("padding")))
+					OSlot->SetPadding(ParsePadding(*SlotObj, TEXT("padding")));
+			}
+			// UniformGridPanel Slot
+			else if (UUniformGridSlot* GridSlot = Cast<UUniformGridSlot>(NewWidget->Slot))
+			{
+				if ((*SlotObj)->HasField(TEXT("row")))
+					GridSlot->SetRow((*SlotObj)->GetIntegerField(TEXT("row")));
+				if ((*SlotObj)->HasField(TEXT("column")))
+					GridSlot->SetColumn((*SlotObj)->GetIntegerField(TEXT("column")));
+				if ((*SlotObj)->HasField(TEXT("h_align")))
+					GridSlot->SetHorizontalAlignment(ParseHAlign((*SlotObj)->GetStringField(TEXT("h_align"))));
+				if ((*SlotObj)->HasField(TEXT("v_align")))
+					GridSlot->SetVerticalAlignment(ParseVAlign((*SlotObj)->GetStringField(TEXT("v_align"))));
 			}
 		}
 	}
 
-	// Apply properties
+	// Apply visibility
+	if (WidgetSpec->HasField(TEXT("visibility")))
+	{
+		FString Vis = WidgetSpec->GetStringField(TEXT("visibility"));
+		if (Vis == TEXT("Collapsed")) NewWidget->SetVisibility(ESlateVisibility::Collapsed);
+		else if (Vis == TEXT("Hidden")) NewWidget->SetVisibility(ESlateVisibility::Hidden);
+		else if (Vis == TEXT("HitTestInvisible")) NewWidget->SetVisibility(ESlateVisibility::HitTestInvisible);
+		else if (Vis == TEXT("SelfHitTestInvisible")) NewWidget->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+		else NewWidget->SetVisibility(ESlateVisibility::Visible);
+	}
+
+	// Apply enabled state
+	if (WidgetSpec->HasField(TEXT("enabled")))
+	{
+		NewWidget->SetIsEnabled(WidgetSpec->GetBoolField(TEXT("enabled")));
+	}
+
+	// Apply render opacity
+	if (WidgetSpec->HasField(TEXT("render_opacity")))
+	{
+		NewWidget->SetRenderOpacity(WidgetSpec->GetNumberField(TEXT("render_opacity")));
+	}
+
+	// Apply tooltip
+	if (WidgetSpec->HasField(TEXT("tooltip")))
+	{
+		NewWidget->SetToolTipText(FText::FromString(WidgetSpec->GetStringField(TEXT("tooltip"))));
+	}
+
+	// Apply render transform
+	if (WidgetSpec->HasField(TEXT("transform")))
+	{
+		const TSharedPtr<FJsonObject>* TransObj;
+		if (WidgetSpec->TryGetObjectField(TEXT("transform"), TransObj))
+		{
+			FWidgetTransform Transform;
+			if ((*TransObj)->HasField(TEXT("translation")))
+				Transform.Translation = FCommonUtils::GetVector2DFromJson(*TransObj, TEXT("translation"));
+			if ((*TransObj)->HasField(TEXT("scale")))
+				Transform.Scale = FCommonUtils::GetVector2DFromJson(*TransObj, TEXT("scale"));
+			else
+				Transform.Scale = FVector2D(1.0f, 1.0f);
+			if ((*TransObj)->HasField(TEXT("shear")))
+				Transform.Shear = FCommonUtils::GetVector2DFromJson(*TransObj, TEXT("shear"));
+			if ((*TransObj)->HasField(TEXT("angle")))
+				Transform.Angle = (*TransObj)->GetNumberField(TEXT("angle"));
+			NewWidget->SetRenderTransform(Transform);
+		}
+	}
+
+	// Apply color shortcut (for any widget with ColorAndOpacity)
+	if (WidgetSpec->HasField(TEXT("color")))
+	{
+		FLinearColor Color = FLinearColor::White;
+		const TSharedPtr<FJsonValue>& ColorVal = WidgetSpec->Values[TEXT("color")];
+		if (ColorVal->Type == EJson::String)
+		{
+			Color = FColor::FromHex(ColorVal->AsString());
+		}
+		else if (ColorVal->Type == EJson::Array)
+		{
+			const TArray<TSharedPtr<FJsonValue>>& CA = ColorVal->AsArray();
+			if (CA.Num() >= 3)
+			{
+				Color.R = CA[0]->AsNumber(); Color.G = CA[1]->AsNumber(); Color.B = CA[2]->AsNumber();
+				Color.A = CA.Num() >= 4 ? CA[3]->AsNumber() : 1.0f;
+			}
+		}
+		FProperty* ColorProp = NewWidget->GetClass()->FindPropertyByName(TEXT("ColorAndOpacity"));
+		if (ColorProp)
+		{
+			FStructProperty* SP = CastField<FStructProperty>(ColorProp);
+			if (SP)
+			{
+				void* VP = SP->ContainerPtrToValuePtr<void>(NewWidget);
+				if (SP->Struct == TBaseStructure<FLinearColor>::Get())
+					*static_cast<FLinearColor*>(VP) = Color;
+				else if (SP->Struct == TBaseStructure<FSlateColor>::Get())
+					*static_cast<FSlateColor*>(VP) = FSlateColor(Color);
+			}
+		}
+	}
+
+	// Apply font_size shortcut
+	if (WidgetSpec->HasField(TEXT("font_size")))
+	{
+		FProperty* FontProp = NewWidget->GetClass()->FindPropertyByName(TEXT("Font"));
+		if (FontProp)
+		{
+			FSlateFontInfo* FontPtr = CastField<FStructProperty>(FontProp)->ContainerPtrToValuePtr<FSlateFontInfo>(NewWidget);
+			if (FontPtr) FontPtr->Size = WidgetSpec->GetIntegerField(TEXT("font_size"));
+		}
+	}
+
+	// Apply properties (generic)
 	if (WidgetSpec->HasField(TEXT("properties")))
 	{
 		const TSharedPtr<FJsonObject>* PropsObj;
@@ -1405,9 +1672,28 @@ UWidget* FWidgetCommands::BuildWidgetRecursive(UWidgetBlueprint* WBP, const TSha
 	// Apply text shortcut
 	if (WidgetSpec->HasField(TEXT("text")))
 	{
+		FString TextStr = WidgetSpec->GetStringField(TEXT("text"));
 		if (UTextBlock* TextBlock = Cast<UTextBlock>(NewWidget))
 		{
-			TextBlock->SetText(FText::FromString(WidgetSpec->GetStringField(TEXT("text"))));
+			TextBlock->SetText(FText::FromString(TextStr));
+		}
+		else if (UEditableTextBox* EditText = Cast<UEditableTextBox>(NewWidget))
+		{
+			EditText->SetText(FText::FromString(TextStr));
+		}
+		else if (URichTextBlock* RichText = Cast<URichTextBlock>(NewWidget))
+		{
+			RichText->SetText(FText::FromString(TextStr));
+		}
+		else
+		{
+			// Try generic Text property
+			FProperty* TextProp = NewWidget->GetClass()->FindPropertyByName(TEXT("Text"));
+			if (TextProp)
+			{
+				FTextProperty* FTP = CastField<FTextProperty>(TextProp);
+				if (FTP) FTP->SetPropertyValue_InContainer(NewWidget, FText::FromString(TextStr));
+			}
 		}
 	}
 
@@ -1802,5 +2088,319 @@ TSharedPtr<FJsonObject> FWidgetCommands::HandleSearchWidgets(const TSharedPtr<FJ
 	Result->SetBoolField(TEXT("success"), true);
 	Result->SetArrayField(TEXT("widgets"), MatchesArr);
 	Result->SetNumberField(TEXT("count"), MatchesArr.Num());
+	return Result;
+}
+
+// =========================================================================
+// Tier 6: State & Layout
+// =========================================================================
+
+TSharedPtr<FJsonObject> FWidgetCommands::HandleSetWidgetVisibility(const TSharedPtr<FJsonObject>& Params)
+{
+	FString BlueprintName = Params->GetStringField(TEXT("blueprint_name"));
+	FString BlueprintPath = Params->HasField(TEXT("blueprint_path")) ? Params->GetStringField(TEXT("blueprint_path")) : TEXT("/Game/");
+	FString WidgetName = Params->GetStringField(TEXT("widget_name"));
+	FString Visibility = Params->GetStringField(TEXT("visibility"));
+
+	UWidgetBlueprint* WBP = FindWidgetBlueprint(BlueprintName, BlueprintPath);
+	if (!WBP) return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *BlueprintName));
+
+	UWidget* Widget = FindWidgetByName(WBP, WidgetName);
+	if (!Widget) return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget '%s' not found"), *WidgetName));
+
+	ESlateVisibility NewVis;
+	if (Visibility == TEXT("Visible")) NewVis = ESlateVisibility::Visible;
+	else if (Visibility == TEXT("Collapsed")) NewVis = ESlateVisibility::Collapsed;
+	else if (Visibility == TEXT("Hidden")) NewVis = ESlateVisibility::Hidden;
+	else if (Visibility == TEXT("HitTestInvisible")) NewVis = ESlateVisibility::HitTestInvisible;
+	else if (Visibility == TEXT("SelfHitTestInvisible")) NewVis = ESlateVisibility::SelfHitTestInvisible;
+	else return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Unknown visibility: '%s'. Use: Visible, Collapsed, Hidden, HitTestInvisible, SelfHitTestInvisible"), *Visibility));
+
+	Widget->SetVisibility(NewVis);
+
+	FKismetEditorUtilities::CompileBlueprint(WBP);
+	WBP->GetPackage()->MarkPackageDirty();
+
+	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+	Result->SetBoolField(TEXT("success"), true);
+	Result->SetStringField(TEXT("widget"), WidgetName);
+	Result->SetStringField(TEXT("visibility"), Visibility);
+	return Result;
+}
+
+TSharedPtr<FJsonObject> FWidgetCommands::HandleSetWidgetEnabled(const TSharedPtr<FJsonObject>& Params)
+{
+	FString BlueprintName = Params->GetStringField(TEXT("blueprint_name"));
+	FString BlueprintPath = Params->HasField(TEXT("blueprint_path")) ? Params->GetStringField(TEXT("blueprint_path")) : TEXT("/Game/");
+	FString WidgetName = Params->GetStringField(TEXT("widget_name"));
+	bool bEnabled = Params->GetBoolField(TEXT("enabled"));
+
+	UWidgetBlueprint* WBP = FindWidgetBlueprint(BlueprintName, BlueprintPath);
+	if (!WBP) return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *BlueprintName));
+
+	UWidget* Widget = FindWidgetByName(WBP, WidgetName);
+	if (!Widget) return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget '%s' not found"), *WidgetName));
+
+	Widget->SetIsEnabled(bEnabled);
+
+	FKismetEditorUtilities::CompileBlueprint(WBP);
+	WBP->GetPackage()->MarkPackageDirty();
+
+	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+	Result->SetBoolField(TEXT("success"), true);
+	Result->SetStringField(TEXT("widget"), WidgetName);
+	Result->SetBoolField(TEXT("enabled"), bEnabled);
+	return Result;
+}
+
+TSharedPtr<FJsonObject> FWidgetCommands::HandleSetBoxSlot(const TSharedPtr<FJsonObject>& Params)
+{
+	FString BlueprintName = Params->GetStringField(TEXT("blueprint_name"));
+	FString BlueprintPath = Params->HasField(TEXT("blueprint_path")) ? Params->GetStringField(TEXT("blueprint_path")) : TEXT("/Game/");
+	FString WidgetName = Params->GetStringField(TEXT("widget_name"));
+
+	UWidgetBlueprint* WBP = FindWidgetBlueprint(BlueprintName, BlueprintPath);
+	if (!WBP) return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *BlueprintName));
+
+	UWidget* Widget = FindWidgetByName(WBP, WidgetName);
+	if (!Widget || !Widget->Slot) return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget '%s' not found or has no slot"), *WidgetName));
+
+	auto ParseHAlign = [](const FString& S) -> EHorizontalAlignment {
+		if (S == TEXT("Left")) return HAlign_Left;
+		if (S == TEXT("Center")) return HAlign_Center;
+		if (S == TEXT("Right")) return HAlign_Right;
+		return HAlign_Fill;
+	};
+	auto ParseVAlign = [](const FString& S) -> EVerticalAlignment {
+		if (S == TEXT("Top")) return VAlign_Top;
+		if (S == TEXT("Center")) return VAlign_Center;
+		if (S == TEXT("Bottom")) return VAlign_Bottom;
+		return VAlign_Fill;
+	};
+
+	FString SlotType;
+
+	// VerticalBox Slot
+	if (UVerticalBoxSlot* VSlot = Cast<UVerticalBoxSlot>(Widget->Slot))
+	{
+		SlotType = TEXT("VerticalBoxSlot");
+		if (Params->HasField(TEXT("h_align")))
+			VSlot->SetHorizontalAlignment(ParseHAlign(Params->GetStringField(TEXT("h_align"))));
+		if (Params->HasField(TEXT("v_align")))
+			VSlot->SetVerticalAlignment(ParseVAlign(Params->GetStringField(TEXT("v_align"))));
+		if (Params->HasField(TEXT("padding")))
+		{
+			float Pad = Params->GetNumberField(TEXT("padding"));
+			VSlot->SetPadding(FMargin(Pad));
+		}
+		if (Params->HasField(TEXT("padding_left")) || Params->HasField(TEXT("padding_top")))
+		{
+			FMargin M;
+			M.Left = Params->HasField(TEXT("padding_left")) ? Params->GetNumberField(TEXT("padding_left")) : 0;
+			M.Top = Params->HasField(TEXT("padding_top")) ? Params->GetNumberField(TEXT("padding_top")) : 0;
+			M.Right = Params->HasField(TEXT("padding_right")) ? Params->GetNumberField(TEXT("padding_right")) : 0;
+			M.Bottom = Params->HasField(TEXT("padding_bottom")) ? Params->GetNumberField(TEXT("padding_bottom")) : 0;
+			VSlot->SetPadding(M);
+		}
+		if (Params->HasField(TEXT("size_rule")))
+		{
+			FSlateChildSize Size;
+			FString Rule = Params->GetStringField(TEXT("size_rule"));
+			if (Rule == TEXT("Auto"))
+				Size.SizeRule = ESlateSizeRule::Automatic;
+			else
+			{
+				Size.SizeRule = ESlateSizeRule::Fill;
+				Size.Value = Params->HasField(TEXT("fill_weight")) ? Params->GetNumberField(TEXT("fill_weight")) : 1.0f;
+			}
+			VSlot->SetSize(Size);
+		}
+	}
+	// HorizontalBox Slot
+	else if (UHorizontalBoxSlot* HSlot = Cast<UHorizontalBoxSlot>(Widget->Slot))
+	{
+		SlotType = TEXT("HorizontalBoxSlot");
+		if (Params->HasField(TEXT("h_align")))
+			HSlot->SetHorizontalAlignment(ParseHAlign(Params->GetStringField(TEXT("h_align"))));
+		if (Params->HasField(TEXT("v_align")))
+			HSlot->SetVerticalAlignment(ParseVAlign(Params->GetStringField(TEXT("v_align"))));
+		if (Params->HasField(TEXT("padding")))
+		{
+			float Pad = Params->GetNumberField(TEXT("padding"));
+			HSlot->SetPadding(FMargin(Pad));
+		}
+		if (Params->HasField(TEXT("padding_left")) || Params->HasField(TEXT("padding_top")))
+		{
+			FMargin M;
+			M.Left = Params->HasField(TEXT("padding_left")) ? Params->GetNumberField(TEXT("padding_left")) : 0;
+			M.Top = Params->HasField(TEXT("padding_top")) ? Params->GetNumberField(TEXT("padding_top")) : 0;
+			M.Right = Params->HasField(TEXT("padding_right")) ? Params->GetNumberField(TEXT("padding_right")) : 0;
+			M.Bottom = Params->HasField(TEXT("padding_bottom")) ? Params->GetNumberField(TEXT("padding_bottom")) : 0;
+			HSlot->SetPadding(M);
+		}
+		if (Params->HasField(TEXT("size_rule")))
+		{
+			FSlateChildSize Size;
+			FString Rule = Params->GetStringField(TEXT("size_rule"));
+			if (Rule == TEXT("Auto"))
+				Size.SizeRule = ESlateSizeRule::Automatic;
+			else
+			{
+				Size.SizeRule = ESlateSizeRule::Fill;
+				Size.Value = Params->HasField(TEXT("fill_weight")) ? Params->GetNumberField(TEXT("fill_weight")) : 1.0f;
+			}
+			HSlot->SetSize(Size);
+		}
+	}
+	// Overlay Slot
+	else if (UOverlaySlot* OSlot = Cast<UOverlaySlot>(Widget->Slot))
+	{
+		SlotType = TEXT("OverlaySlot");
+		if (Params->HasField(TEXT("h_align")))
+			OSlot->SetHorizontalAlignment(ParseHAlign(Params->GetStringField(TEXT("h_align"))));
+		if (Params->HasField(TEXT("v_align")))
+			OSlot->SetVerticalAlignment(ParseVAlign(Params->GetStringField(TEXT("v_align"))));
+		if (Params->HasField(TEXT("padding")))
+		{
+			float Pad = Params->GetNumberField(TEXT("padding"));
+			OSlot->SetPadding(FMargin(Pad));
+		}
+	}
+	else
+	{
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget '%s' is not in a Box/Overlay slot. Use set_widget_slot for Canvas, set_grid_slot for Grid."), *WidgetName));
+	}
+
+	FKismetEditorUtilities::CompileBlueprint(WBP);
+	WBP->GetPackage()->MarkPackageDirty();
+
+	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+	Result->SetBoolField(TEXT("success"), true);
+	Result->SetStringField(TEXT("widget"), WidgetName);
+	Result->SetStringField(TEXT("slot_type"), SlotType);
+	return Result;
+}
+
+TSharedPtr<FJsonObject> FWidgetCommands::HandleSetGridSlot(const TSharedPtr<FJsonObject>& Params)
+{
+	FString BlueprintName = Params->GetStringField(TEXT("blueprint_name"));
+	FString BlueprintPath = Params->HasField(TEXT("blueprint_path")) ? Params->GetStringField(TEXT("blueprint_path")) : TEXT("/Game/");
+	FString WidgetName = Params->GetStringField(TEXT("widget_name"));
+
+	UWidgetBlueprint* WBP = FindWidgetBlueprint(BlueprintName, BlueprintPath);
+	if (!WBP) return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *BlueprintName));
+
+	UWidget* Widget = FindWidgetByName(WBP, WidgetName);
+	if (!Widget || !Widget->Slot) return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget '%s' not found or has no slot"), *WidgetName));
+
+	UUniformGridSlot* GridSlot = Cast<UUniformGridSlot>(Widget->Slot);
+	if (!GridSlot) return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget '%s' is not in a UniformGridPanel"), *WidgetName));
+
+	if (Params->HasField(TEXT("row")))
+		GridSlot->SetRow(Params->GetIntegerField(TEXT("row")));
+	if (Params->HasField(TEXT("column")))
+		GridSlot->SetColumn(Params->GetIntegerField(TEXT("column")));
+	if (Params->HasField(TEXT("h_align")))
+	{
+		FString HA = Params->GetStringField(TEXT("h_align"));
+		if (HA == TEXT("Left")) GridSlot->SetHorizontalAlignment(HAlign_Left);
+		else if (HA == TEXT("Center")) GridSlot->SetHorizontalAlignment(HAlign_Center);
+		else if (HA == TEXT("Right")) GridSlot->SetHorizontalAlignment(HAlign_Right);
+		else GridSlot->SetHorizontalAlignment(HAlign_Fill);
+	}
+	if (Params->HasField(TEXT("v_align")))
+	{
+		FString VA = Params->GetStringField(TEXT("v_align"));
+		if (VA == TEXT("Top")) GridSlot->SetVerticalAlignment(VAlign_Top);
+		else if (VA == TEXT("Center")) GridSlot->SetVerticalAlignment(VAlign_Center);
+		else if (VA == TEXT("Bottom")) GridSlot->SetVerticalAlignment(VAlign_Bottom);
+		else GridSlot->SetVerticalAlignment(VAlign_Fill);
+	}
+
+	FKismetEditorUtilities::CompileBlueprint(WBP);
+	WBP->GetPackage()->MarkPackageDirty();
+
+	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+	Result->SetBoolField(TEXT("success"), true);
+	Result->SetStringField(TEXT("widget"), WidgetName);
+	Result->SetStringField(TEXT("slot_type"), TEXT("UniformGridSlot"));
+	return Result;
+}
+
+TSharedPtr<FJsonObject> FWidgetCommands::HandleSetWidgetTransform(const TSharedPtr<FJsonObject>& Params)
+{
+	FString BlueprintName = Params->GetStringField(TEXT("blueprint_name"));
+	FString BlueprintPath = Params->HasField(TEXT("blueprint_path")) ? Params->GetStringField(TEXT("blueprint_path")) : TEXT("/Game/");
+	FString WidgetName = Params->GetStringField(TEXT("widget_name"));
+
+	UWidgetBlueprint* WBP = FindWidgetBlueprint(BlueprintName, BlueprintPath);
+	if (!WBP) return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *BlueprintName));
+
+	UWidget* Widget = FindWidgetByName(WBP, WidgetName);
+	if (!Widget) return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget '%s' not found"), *WidgetName));
+
+	FWidgetTransform Transform = Widget->GetRenderTransform();
+
+	if (Params->HasField(TEXT("translation")))
+		Transform.Translation = FCommonUtils::GetVector2DFromJson(Params, TEXT("translation"));
+	if (Params->HasField(TEXT("scale")))
+		Transform.Scale = FCommonUtils::GetVector2DFromJson(Params, TEXT("scale"));
+	if (Params->HasField(TEXT("shear")))
+		Transform.Shear = FCommonUtils::GetVector2DFromJson(Params, TEXT("shear"));
+	if (Params->HasField(TEXT("angle")))
+		Transform.Angle = Params->GetNumberField(TEXT("angle"));
+
+	Widget->SetRenderTransform(Transform);
+
+	if (Params->HasField(TEXT("pivot")))
+	{
+		FVector2D Pivot = FCommonUtils::GetVector2DFromJson(Params, TEXT("pivot"));
+		Widget->SetRenderTransformPivot(Pivot);
+	}
+
+	FKismetEditorUtilities::CompileBlueprint(WBP);
+	WBP->GetPackage()->MarkPackageDirty();
+
+	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+	Result->SetBoolField(TEXT("success"), true);
+	Result->SetStringField(TEXT("widget"), WidgetName);
+	Result->SetNumberField(TEXT("angle"), Transform.Angle);
+	TArray<TSharedPtr<FJsonValue>> TransArr;
+	TransArr.Add(MakeShared<FJsonValueNumber>(Transform.Translation.X));
+	TransArr.Add(MakeShared<FJsonValueNumber>(Transform.Translation.Y));
+	Result->SetArrayField(TEXT("translation"), TransArr);
+	TArray<TSharedPtr<FJsonValue>> ScaleArr;
+	ScaleArr.Add(MakeShared<FJsonValueNumber>(Transform.Scale.X));
+	ScaleArr.Add(MakeShared<FJsonValueNumber>(Transform.Scale.Y));
+	Result->SetArrayField(TEXT("scale"), ScaleArr);
+	return Result;
+}
+
+// =========================================================================
+// Tier 7: Advanced
+// =========================================================================
+
+TSharedPtr<FJsonObject> FWidgetCommands::HandleSetWidgetTooltip(const TSharedPtr<FJsonObject>& Params)
+{
+	FString BlueprintName = Params->GetStringField(TEXT("blueprint_name"));
+	FString BlueprintPath = Params->HasField(TEXT("blueprint_path")) ? Params->GetStringField(TEXT("blueprint_path")) : TEXT("/Game/");
+	FString WidgetName = Params->GetStringField(TEXT("widget_name"));
+	FString TooltipText = Params->GetStringField(TEXT("tooltip_text"));
+
+	UWidgetBlueprint* WBP = FindWidgetBlueprint(BlueprintName, BlueprintPath);
+	if (!WBP) return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *BlueprintName));
+
+	UWidget* Widget = FindWidgetByName(WBP, WidgetName);
+	if (!Widget) return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget '%s' not found"), *WidgetName));
+
+	Widget->SetToolTipText(FText::FromString(TooltipText));
+
+	FKismetEditorUtilities::CompileBlueprint(WBP);
+	WBP->GetPackage()->MarkPackageDirty();
+
+	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+	Result->SetBoolField(TEXT("success"), true);
+	Result->SetStringField(TEXT("widget"), WidgetName);
+	Result->SetStringField(TEXT("tooltip"), TooltipText);
 	return Result;
 }

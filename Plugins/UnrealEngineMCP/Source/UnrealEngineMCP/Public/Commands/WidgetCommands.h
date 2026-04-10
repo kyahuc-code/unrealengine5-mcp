@@ -8,7 +8,7 @@ class UWidget;
 class UPanelWidget;
 
 /**
- * Handles Widget Blueprint (UMG) commands (24 total)
+ * Handles Widget Blueprint (UMG) commands (30 total)
  * Creates and manipulates Widget Blueprints for UI development
  */
 class UNREALENGINEMCP_API FWidgetCommands
@@ -55,6 +55,16 @@ private:
 	TSharedPtr<FJsonObject> HandleAnalyzeWidgetHierarchy(const TSharedPtr<FJsonObject>& Params);
 	TSharedPtr<FJsonObject> HandleGetWidgetTypeInfo(const TSharedPtr<FJsonObject>& Params);
 	TSharedPtr<FJsonObject> HandleSearchWidgets(const TSharedPtr<FJsonObject>& Params);
+
+	// === Tier 6: State & Layout (5) ===
+	TSharedPtr<FJsonObject> HandleSetWidgetVisibility(const TSharedPtr<FJsonObject>& Params);
+	TSharedPtr<FJsonObject> HandleSetWidgetEnabled(const TSharedPtr<FJsonObject>& Params);
+	TSharedPtr<FJsonObject> HandleSetBoxSlot(const TSharedPtr<FJsonObject>& Params);
+	TSharedPtr<FJsonObject> HandleSetGridSlot(const TSharedPtr<FJsonObject>& Params);
+	TSharedPtr<FJsonObject> HandleSetWidgetTransform(const TSharedPtr<FJsonObject>& Params);
+
+	// === Tier 7: Advanced (1) ===
+	TSharedPtr<FJsonObject> HandleSetWidgetTooltip(const TSharedPtr<FJsonObject>& Params);
 
 	// === Helpers ===
 	UWidgetBlueprint* FindWidgetBlueprint(const FString& Name, const FString& Path);

@@ -382,7 +382,13 @@ FString UUnrealEngineMCPBridge::ExecuteCommandInternal(const FString& CommandTyp
 				 CommandType == TEXT("clone_widget_subtree") ||
 				 CommandType == TEXT("analyze_widget_hierarchy") ||
 				 CommandType == TEXT("get_widget_type_info") ||
-				 CommandType == TEXT("search_widgets"))
+				 CommandType == TEXT("search_widgets") ||
+				 CommandType == TEXT("set_widget_visibility") ||
+				 CommandType == TEXT("set_widget_enabled") ||
+				 CommandType == TEXT("set_box_slot") ||
+				 CommandType == TEXT("set_grid_slot") ||
+				 CommandType == TEXT("set_widget_transform") ||
+				 CommandType == TEXT("set_widget_tooltip"))
 		{
 			ResultJson = WidgetCommandHandler->HandleCommand(CommandType, Params);
 		}

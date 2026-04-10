@@ -72,7 +72,10 @@ def register_widget_tools(mcp: FastMCP):
 
         Supported widget_type: CanvasPanel, VerticalBox, HorizontalBox, Button,
         TextBlock, Image, Border, Overlay, ScrollBox, SizeBox, Spacer,
-        ProgressBar, Slider, CheckBox, EditableTextBox, GridPanel, WrapBox, ScaleBox.
+        ProgressBar, Slider, CheckBox, EditableTextBox, GridPanel, WrapBox, ScaleBox,
+        ComboBoxString, RichTextBlock, MultiLineEditableTextBox, WidgetSwitcher,
+        UniformGridPanel, BackgroundBlur, Throbber, CircularThrobber,
+        ExpandableArea, RetainerBox, InvalidationBox, SafeZone, NamedSlot.
 
         If parent_name is empty, adds to root widget."""
         for val, param_name in [(blueprint_name, "blueprint_name"), (widget_type, "widget_type"), (widget_name, "widget_name")]:
@@ -462,10 +465,22 @@ def register_widget_tools(mcp: FastMCP):
     ) -> Dict[str, Any]:
         """Build entire widget tree atomically in one call. Supports Ctrl+Z undo.
 
-        Each widget: {"name": "MyButton", "type": "Button", "children": [...],
-                      "slot": {"position": [x,y], "size": [w,h]},
-                      "properties": {"bIsEnabled": true},
-                      "text": "Click Me"}
+        Each widget spec supports:
+          name, type (required), children (recursive)
+          text: "Hello" (TextBlock/RichTextBlock/EditableTextBox shortcut)
+          color: [R,G,B,A] or "#RRGGBB" (ColorAndOpacity shortcut)
+          font_size: 24 (font size shortcut)
+          visibility: "Visible"|"Collapsed"|"Hidden"|"HitTestInvisible"|"SelfHitTestInvisible"
+          enabled: true/false
+          render_opacity: 0.0-1.0
+          tooltip: "Hover text"
+          transform: {"translation": [x,y], "scale": [x,y], "angle": 45, "shear": [x,y]}
+          properties: {"PropertyName": "value"} (generic, via reflection)
+          slot: depends on parent type:
+            CanvasPanel: {"position": [x,y], "size": [w,h], "anchors": {"min_x":0,"min_y":0,"max_x":1,"max_y":1}, "alignment": [0.5,0.5], "z_order": 1, "auto_size": true}
+            VerticalBox/HorizontalBox: {"h_align": "Fill", "v_align": "Fill", "size_rule": "Fill", "fill_weight": 1.0, "padding": 8}
+            Overlay: {"h_align": "Fill", "v_align": "Fill", "padding": 8}
+            UniformGridPanel: {"row": 0, "column": 0, "h_align": "Fill", "v_align": "Fill"}
 
         If replace_root=True, clears existing tree and uses first widget as root."""
         if error := validate_name(blueprint_name, "blueprint_name"):
@@ -545,5 +560,172 @@ def register_widget_tools(mcp: FastMCP):
         if name_pattern:
             params["name_pattern"] = name_pattern
         return get_unreal_client().execute_command("search_widgets", params)
+
+    # =========================================================================
+    # Tier 6: State & Layout
+    # =========================================================================
+
+    @mcp.tool()
+    def set_widget_visibility(
+        blueprint_name: str,
+        widget_name: str,
+        visibility: Literal["Visible", "Collapsed", "Hidden", "HitTestInvisible", "SelfHitTestInvisible"],
+        blueprint_path: str = "/Game/"
+    ) -> Dict[str, Any]:
+        """Set widget visibility state.
+
+        - Visible: Fully visible and interactive
+        - Collapsed: Hidden, takes no space in layout
+        - Hidden: Hidden but still occupies layout space
+        - HitTestInvisible: Visible but not interactive (click-through), children too
+        - SelfHitTestInvisible: Visible but not interactive, children CAN receive input
+        """
+        for val, param_name in [(blueprint_name, "blueprint_name"), (widget_name, "widget_name")]:
+            if error := validate_name(val, param_name):
+                return create_error_response(error)
+        return get_unreal_client().execute_command("set_widget_visibility", {
+            "blueprint_name": blueprint_name, "widget_name": widget_name,
+            "visibility": visibility, "blueprint_path": blueprint_path
+        })
+
+    @mcp.tool()
+    def set_widget_enabled(
+        blueprint_name: str,
+        widget_name: str,
+        enabled: bool,
+        blueprint_path: str = "/Game/"
+    ) -> Dict[str, Any]:
+        """Enable or disable a widget. Disabled widgets cannot receive user input."""
+        for val, param_name in [(blueprint_name, "blueprint_name"), (widget_name, "widget_name")]:
+            if error := validate_name(val, param_name):
+                return create_error_response(error)
+        return get_unreal_client().execute_command("set_widget_enabled", {
+            "blueprint_name": blueprint_name, "widget_name": widget_name,
+            "enabled": enabled, "blueprint_path": blueprint_path
+        })
+
+    @mcp.tool()
+    def set_box_slot(
+        blueprint_name: str,
+        widget_name: str,
+        h_align: Optional[Literal["Left", "Center", "Right", "Fill"]] = None,
+        v_align: Optional[Literal["Top", "Center", "Bottom", "Fill"]] = None,
+        size_rule: Optional[Literal["Auto", "Fill"]] = None,
+        fill_weight: Optional[float] = None,
+        padding: Optional[float] = None,
+        padding_left: Optional[float] = None,
+        padding_top: Optional[float] = None,
+        padding_right: Optional[float] = None,
+        padding_bottom: Optional[float] = None,
+        blueprint_path: str = "/Game/"
+    ) -> Dict[str, Any]:
+        """Set slot properties for a widget in a VerticalBox, HorizontalBox, or Overlay.
+
+        Args:
+            h_align: Horizontal alignment (Left, Center, Right, Fill)
+            v_align: Vertical alignment (Top, Center, Bottom, Fill)
+            size_rule: Auto (fit content) or Fill (expand to fill available space)
+            fill_weight: Weight when size_rule=Fill (default 1.0)
+            padding: Uniform padding on all sides
+            padding_left/top/right/bottom: Per-side padding (overrides padding)
+        """
+        for val, param_name in [(blueprint_name, "blueprint_name"), (widget_name, "widget_name")]:
+            if error := validate_name(val, param_name):
+                return create_error_response(error)
+        params: Dict[str, Any] = {
+            "blueprint_name": blueprint_name, "widget_name": widget_name,
+            "blueprint_path": blueprint_path
+        }
+        if h_align is not None: params["h_align"] = h_align
+        if v_align is not None: params["v_align"] = v_align
+        if size_rule is not None: params["size_rule"] = size_rule
+        if fill_weight is not None: params["fill_weight"] = fill_weight
+        if padding is not None: params["padding"] = padding
+        if padding_left is not None: params["padding_left"] = padding_left
+        if padding_top is not None: params["padding_top"] = padding_top
+        if padding_right is not None: params["padding_right"] = padding_right
+        if padding_bottom is not None: params["padding_bottom"] = padding_bottom
+        return get_unreal_client().execute_command("set_box_slot", params)
+
+    @mcp.tool()
+    def set_grid_slot(
+        blueprint_name: str,
+        widget_name: str,
+        row: Optional[int] = None,
+        column: Optional[int] = None,
+        h_align: Optional[Literal["Left", "Center", "Right", "Fill"]] = None,
+        v_align: Optional[Literal["Top", "Center", "Bottom", "Fill"]] = None,
+        blueprint_path: str = "/Game/"
+    ) -> Dict[str, Any]:
+        """Set slot properties for a widget in a UniformGridPanel.
+
+        Args:
+            row: Grid row index (0-based)
+            column: Grid column index (0-based)
+            h_align: Horizontal alignment within cell
+            v_align: Vertical alignment within cell
+        """
+        for val, param_name in [(blueprint_name, "blueprint_name"), (widget_name, "widget_name")]:
+            if error := validate_name(val, param_name):
+                return create_error_response(error)
+        params: Dict[str, Any] = {
+            "blueprint_name": blueprint_name, "widget_name": widget_name,
+            "blueprint_path": blueprint_path
+        }
+        if row is not None: params["row"] = row
+        if column is not None: params["column"] = column
+        if h_align is not None: params["h_align"] = h_align
+        if v_align is not None: params["v_align"] = v_align
+        return get_unreal_client().execute_command("set_grid_slot", params)
+
+    @mcp.tool()
+    def set_widget_transform(
+        blueprint_name: str,
+        widget_name: str,
+        translation: Optional[List[float]] = None,
+        scale: Optional[List[float]] = None,
+        shear: Optional[List[float]] = None,
+        angle: Optional[float] = None,
+        pivot: Optional[List[float]] = None,
+        blueprint_path: str = "/Game/"
+    ) -> Dict[str, Any]:
+        """Set render transform on a widget.
+
+        Args:
+            translation: [X, Y] offset in pixels
+            scale: [X, Y] scale factors (1.0 = normal)
+            shear: [X, Y] shear amounts
+            angle: Rotation in degrees
+            pivot: [X, Y] transform pivot point (0-1 range, default [0.5, 0.5])
+        """
+        for val, param_name in [(blueprint_name, "blueprint_name"), (widget_name, "widget_name")]:
+            if error := validate_name(val, param_name):
+                return create_error_response(error)
+        params: Dict[str, Any] = {
+            "blueprint_name": blueprint_name, "widget_name": widget_name,
+            "blueprint_path": blueprint_path
+        }
+        if translation is not None: params["translation"] = translation
+        if scale is not None: params["scale"] = scale
+        if shear is not None: params["shear"] = shear
+        if angle is not None: params["angle"] = angle
+        if pivot is not None: params["pivot"] = pivot
+        return get_unreal_client().execute_command("set_widget_transform", params)
+
+    @mcp.tool()
+    def set_widget_tooltip(
+        blueprint_name: str,
+        widget_name: str,
+        tooltip_text: str,
+        blueprint_path: str = "/Game/"
+    ) -> Dict[str, Any]:
+        """Set tooltip text on a widget. Shown when user hovers over the widget."""
+        for val, param_name in [(blueprint_name, "blueprint_name"), (widget_name, "widget_name")]:
+            if error := validate_name(val, param_name):
+                return create_error_response(error)
+        return get_unreal_client().execute_command("set_widget_tooltip", {
+            "blueprint_name": blueprint_name, "widget_name": widget_name,
+            "tooltip_text": tooltip_text, "blueprint_path": blueprint_path
+        })
 
     log_info("Widget tools registered successfully")
