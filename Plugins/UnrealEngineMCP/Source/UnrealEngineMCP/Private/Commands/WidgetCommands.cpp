@@ -25,11 +25,20 @@
 #include "Components/GridPanel.h"
 #include "Components/WrapBox.h"
 #include "Components/ScaleBox.h"
+#include "Components/ListView.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "EditorAssetLibrary.h"
 #include "Kismet2/KismetEditorUtilities.h"
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "UObject/SavePackage.h"
+#include "K2Node_ComponentBoundEvent.h"
+#include "K2Node_CallFunction.h"
+#include "EdGraphSchema_K2.h"
+#include "ScopedTransaction.h"
+#include "Animation/WidgetAnimation.h"
+#include "Styling/SlateBrush.h"
+#include "Styling/SlateColor.h"
+#include "Fonts/SlateFontInfo.h"
 
 FWidgetCommands::FWidgetCommands()
 {
@@ -68,6 +77,79 @@ TSharedPtr<FJsonObject> FWidgetCommands::HandleCommand(const FString& CommandTyp
 	else if (CommandType == TEXT("list_widget_children"))
 	{
 		return HandleListWidgetChildren(Params);
+	}
+	// Tier 1: Event Binding
+	else if (CommandType == TEXT("bind_widget_event"))
+	{
+		return HandleBindWidgetEvent(Params);
+	}
+	else if (CommandType == TEXT("unbind_widget_event"))
+	{
+		return HandleUnbindWidgetEvent(Params);
+	}
+	else if (CommandType == TEXT("list_widget_events"))
+	{
+		return HandleListWidgetEvents(Params);
+	}
+	else if (CommandType == TEXT("add_widget_function_node"))
+	{
+		return HandleAddWidgetFunctionNode(Params);
+	}
+	// Tier 2: Content & Styling
+	else if (CommandType == TEXT("set_widget_text"))
+	{
+		return HandleSetWidgetText(Params);
+	}
+	else if (CommandType == TEXT("set_widget_color"))
+	{
+		return HandleSetWidgetColor(Params);
+	}
+	else if (CommandType == TEXT("set_widget_brush"))
+	{
+		return HandleSetWidgetBrush(Params);
+	}
+	else if (CommandType == TEXT("set_widget_font"))
+	{
+		return HandleSetWidgetFont(Params);
+	}
+	else if (CommandType == TEXT("set_widget_padding"))
+	{
+		return HandleSetWidgetPadding(Params);
+	}
+	// Tier 3: Animation
+	else if (CommandType == TEXT("create_widget_animation"))
+	{
+		return HandleCreateWidgetAnimation(Params);
+	}
+	else if (CommandType == TEXT("play_animation_node"))
+	{
+		return HandlePlayAnimationNode(Params);
+	}
+	else if (CommandType == TEXT("list_widget_animations"))
+	{
+		return HandleListWidgetAnimations(Params);
+	}
+	// Tier 4: Atomic Batch
+	else if (CommandType == TEXT("build_widget_tree"))
+	{
+		return HandleBuildWidgetTree(Params);
+	}
+	else if (CommandType == TEXT("clone_widget_subtree"))
+	{
+		return HandleCloneWidgetSubtree(Params);
+	}
+	// Tier 5: Introspection
+	else if (CommandType == TEXT("analyze_widget_hierarchy"))
+	{
+		return HandleAnalyzeWidgetHierarchy(Params);
+	}
+	else if (CommandType == TEXT("get_widget_type_info"))
+	{
+		return HandleGetWidgetTypeInfo(Params);
+	}
+	else if (CommandType == TEXT("search_widgets"))
+	{
+		return HandleSearchWidgets(Params);
 	}
 
 	return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Unknown widget command: %s"), *CommandType));
@@ -605,4 +687,1120 @@ TSharedPtr<FJsonObject> FWidgetCommands::WidgetTreeToJson(UWidget* Widget)
 	}
 
 	return Obj;
+}
+
+UClass* FWidgetCommands::ResolveWidgetClass(const FString& WidgetType)
+{
+	static TMap<FString, UClass*> WidgetTypeMap;
+	if (WidgetTypeMap.Num() == 0)
+	{
+		WidgetTypeMap.Add(TEXT("CanvasPanel"), UCanvasPanel::StaticClass());
+		WidgetTypeMap.Add(TEXT("VerticalBox"), UVerticalBox::StaticClass());
+		WidgetTypeMap.Add(TEXT("HorizontalBox"), UHorizontalBox::StaticClass());
+		WidgetTypeMap.Add(TEXT("Button"), UButton::StaticClass());
+		WidgetTypeMap.Add(TEXT("TextBlock"), UTextBlock::StaticClass());
+		WidgetTypeMap.Add(TEXT("Image"), UImage::StaticClass());
+		WidgetTypeMap.Add(TEXT("Border"), UBorder::StaticClass());
+		WidgetTypeMap.Add(TEXT("Overlay"), UOverlay::StaticClass());
+		WidgetTypeMap.Add(TEXT("ScrollBox"), UScrollBox::StaticClass());
+		WidgetTypeMap.Add(TEXT("SizeBox"), USizeBox::StaticClass());
+		WidgetTypeMap.Add(TEXT("Spacer"), USpacer::StaticClass());
+		WidgetTypeMap.Add(TEXT("ProgressBar"), UProgressBar::StaticClass());
+		WidgetTypeMap.Add(TEXT("Slider"), USlider::StaticClass());
+		WidgetTypeMap.Add(TEXT("CheckBox"), UCheckBox::StaticClass());
+		WidgetTypeMap.Add(TEXT("EditableTextBox"), UEditableTextBox::StaticClass());
+		WidgetTypeMap.Add(TEXT("GridPanel"), UGridPanel::StaticClass());
+		WidgetTypeMap.Add(TEXT("WrapBox"), UWrapBox::StaticClass());
+		WidgetTypeMap.Add(TEXT("ScaleBox"), UScaleBox::StaticClass());
+	}
+	if (UClass** Found = WidgetTypeMap.Find(WidgetType))
+	{
+		return *Found;
+	}
+	UClass* FoundClass = FCommonUtils::FindClassByName(WidgetType);
+	if (FoundClass && FoundClass->IsChildOf(UWidget::StaticClass()))
+	{
+		return FoundClass;
+	}
+	return nullptr;
+}
+
+// =========================================================================
+// Tier 1: Event Binding
+// =========================================================================
+
+TSharedPtr<FJsonObject> FWidgetCommands::HandleBindWidgetEvent(const TSharedPtr<FJsonObject>& Params)
+{
+	FString BlueprintName = Params->GetStringField(TEXT("blueprint_name"));
+	FString BlueprintPath = Params->HasField(TEXT("blueprint_path")) ? Params->GetStringField(TEXT("blueprint_path")) : TEXT("/Game/");
+	FString WidgetName = Params->GetStringField(TEXT("widget_name"));
+	FString EventName = Params->GetStringField(TEXT("event_name"));
+	FVector2D NodePosition = Params->HasField(TEXT("node_position"))
+		? FCommonUtils::GetVector2DFromJson(Params, TEXT("node_position")) : FVector2D(300, 0);
+
+	UWidgetBlueprint* WBP = FindWidgetBlueprint(BlueprintName, BlueprintPath);
+	if (!WBP) return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *BlueprintName));
+
+	UWidget* Widget = FindWidgetByName(WBP, WidgetName);
+	if (!Widget) return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget '%s' not found"), *WidgetName));
+
+	// Find the multicast delegate property on the widget
+	FMulticastDelegateProperty* DelegateProp = nullptr;
+	for (TFieldIterator<FMulticastDelegateProperty> It(Widget->GetClass()); It; ++It)
+	{
+		if (It->GetName() == EventName)
+		{
+			DelegateProp = *It;
+			break;
+		}
+	}
+	if (!DelegateProp)
+	{
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Event '%s' not found on widget '%s'"), *EventName, *WidgetName));
+	}
+
+	// Find or create event graph
+	UEdGraph* EventGraph = FCommonUtils::FindOrCreateEventGraph(WBP);
+	if (!EventGraph) return FCommonUtils::CreateErrorResponse(TEXT("Failed to get EventGraph"));
+
+	// Create K2Node_ComponentBoundEvent
+	UK2Node_ComponentBoundEvent* EventNode = NewObject<UK2Node_ComponentBoundEvent>(EventGraph);
+	EventNode->CreateNewGuid();
+	EventNode->NodePosX = NodePosition.X;
+	EventNode->NodePosY = NodePosition.Y;
+	EventNode->InitializeComponentBoundEventParams(nullptr, DelegateProp);
+	EventNode->ComponentPropertyName = FName(*WidgetName);
+	EventGraph->AddNode(EventNode, true);
+	EventNode->PostPlacedNewNode();
+	EventNode->AllocateDefaultPins();
+
+	FBlueprintEditorUtils::MarkBlueprintAsModified(WBP);
+	FKismetEditorUtilities::CompileBlueprint(WBP);
+
+	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+	Result->SetBoolField(TEXT("success"), true);
+	Result->SetStringField(TEXT("widget"), WidgetName);
+	Result->SetStringField(TEXT("event"), EventName);
+	Result->SetStringField(TEXT("node_id"), EventNode->NodeGuid.ToString());
+	return Result;
+}
+
+TSharedPtr<FJsonObject> FWidgetCommands::HandleUnbindWidgetEvent(const TSharedPtr<FJsonObject>& Params)
+{
+	FString BlueprintName = Params->GetStringField(TEXT("blueprint_name"));
+	FString BlueprintPath = Params->HasField(TEXT("blueprint_path")) ? Params->GetStringField(TEXT("blueprint_path")) : TEXT("/Game/");
+	FString WidgetName = Params->GetStringField(TEXT("widget_name"));
+	FString EventName = Params->GetStringField(TEXT("event_name"));
+
+	UWidgetBlueprint* WBP = FindWidgetBlueprint(BlueprintName, BlueprintPath);
+	if (!WBP) return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *BlueprintName));
+
+	UEdGraph* EventGraph = FCommonUtils::FindOrCreateEventGraph(WBP);
+	if (!EventGraph) return FCommonUtils::CreateErrorResponse(TEXT("EventGraph not found"));
+
+	bool bRemoved = false;
+	TArray<UEdGraphNode*> NodesToRemove;
+	for (UEdGraphNode* Node : EventGraph->Nodes)
+	{
+		UK2Node_ComponentBoundEvent* BoundEvent = Cast<UK2Node_ComponentBoundEvent>(Node);
+		if (BoundEvent && BoundEvent->ComponentPropertyName == FName(*WidgetName)
+			&& BoundEvent->DelegatePropertyName == FName(*EventName))
+		{
+			NodesToRemove.Add(Node);
+			bRemoved = true;
+		}
+	}
+	for (UEdGraphNode* Node : NodesToRemove)
+	{
+		EventGraph->RemoveNode(Node);
+	}
+
+	if (!bRemoved) return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("No bound event '%s' found on widget '%s'"), *EventName, *WidgetName));
+
+	FBlueprintEditorUtils::MarkBlueprintAsModified(WBP);
+	FKismetEditorUtilities::CompileBlueprint(WBP);
+
+	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+	Result->SetBoolField(TEXT("success"), true);
+	Result->SetStringField(TEXT("widget"), WidgetName);
+	Result->SetStringField(TEXT("event"), EventName);
+	Result->SetNumberField(TEXT("removed_count"), NodesToRemove.Num());
+	return Result;
+}
+
+TSharedPtr<FJsonObject> FWidgetCommands::HandleListWidgetEvents(const TSharedPtr<FJsonObject>& Params)
+{
+	FString WidgetType = Params->GetStringField(TEXT("widget_type"));
+	if (WidgetType.IsEmpty()) return FCommonUtils::CreateErrorResponse(TEXT("Missing 'widget_type' parameter"));
+
+	UClass* WidgetClass = ResolveWidgetClass(WidgetType);
+	if (!WidgetClass) return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget type '%s' not found"), *WidgetType));
+
+	TArray<TSharedPtr<FJsonValue>> Events;
+	for (TFieldIterator<FMulticastDelegateProperty> It(WidgetClass); It; ++It)
+	{
+		TSharedPtr<FJsonObject> EventObj = MakeShared<FJsonObject>();
+		EventObj->SetStringField(TEXT("name"), It->GetName());
+		EventObj->SetStringField(TEXT("class"), It->GetOwnerClass()->GetName());
+
+		// Get delegate signature parameters
+		if (UFunction* SignatureFunc = It->SignatureFunction)
+		{
+			TArray<TSharedPtr<FJsonValue>> ParamsArray;
+			for (TFieldIterator<FProperty> ParamIt(SignatureFunc); ParamIt; ++ParamIt)
+			{
+				if (!(ParamIt->PropertyFlags & CPF_ReturnParm))
+				{
+					TSharedPtr<FJsonObject> ParamObj = MakeShared<FJsonObject>();
+					ParamObj->SetStringField(TEXT("name"), ParamIt->GetName());
+					ParamObj->SetStringField(TEXT("type"), ParamIt->GetCPPType());
+					ParamsArray.Add(MakeShared<FJsonValueObject>(ParamObj));
+				}
+			}
+			EventObj->SetArrayField(TEXT("parameters"), ParamsArray);
+		}
+		Events.Add(MakeShared<FJsonValueObject>(EventObj));
+	}
+
+	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+	Result->SetBoolField(TEXT("success"), true);
+	Result->SetStringField(TEXT("widget_type"), WidgetType);
+	Result->SetArrayField(TEXT("events"), Events);
+	Result->SetNumberField(TEXT("count"), Events.Num());
+	return Result;
+}
+
+TSharedPtr<FJsonObject> FWidgetCommands::HandleAddWidgetFunctionNode(const TSharedPtr<FJsonObject>& Params)
+{
+	FString BlueprintName = Params->GetStringField(TEXT("blueprint_name"));
+	FString BlueprintPath = Params->HasField(TEXT("blueprint_path")) ? Params->GetStringField(TEXT("blueprint_path")) : TEXT("/Game/");
+	FString WidgetName = Params->GetStringField(TEXT("widget_name"));
+	FString FunctionName = Params->GetStringField(TEXT("function_name"));
+	FString GraphName = Params->HasField(TEXT("graph_name")) ? Params->GetStringField(TEXT("graph_name")) : TEXT("");
+	FVector2D NodePosition = Params->HasField(TEXT("node_position"))
+		? FCommonUtils::GetVector2DFromJson(Params, TEXT("node_position")) : FVector2D(500, 0);
+
+	UWidgetBlueprint* WBP = FindWidgetBlueprint(BlueprintName, BlueprintPath);
+	if (!WBP) return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *BlueprintName));
+
+	UWidget* Widget = FindWidgetByName(WBP, WidgetName);
+	if (!Widget) return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget '%s' not found"), *WidgetName));
+
+	// Find function on widget class
+	UFunction* Func = Widget->GetClass()->FindFunctionByName(FName(*FunctionName));
+	if (!Func) return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Function '%s' not found on '%s'"), *FunctionName, *WidgetName));
+
+	UEdGraph* TargetGraph = GraphName.IsEmpty()
+		? FCommonUtils::FindOrCreateEventGraph(WBP)
+		: FCommonUtils::FindGraphByName(WBP, GraphName);
+	if (!TargetGraph) return FCommonUtils::CreateErrorResponse(TEXT("Target graph not found"));
+
+	UK2Node_CallFunction* FuncNode = FCommonUtils::CreateFunctionCallNode(TargetGraph, Func, NodePosition);
+	if (!FuncNode) return FCommonUtils::CreateErrorResponse(TEXT("Failed to create function node"));
+
+	FBlueprintEditorUtils::MarkBlueprintAsModified(WBP);
+	FKismetEditorUtilities::CompileBlueprint(WBP);
+
+	TSharedPtr<FJsonObject> Result = FCommonUtils::CreateNodeResponse(FuncNode, true);
+	Result->SetStringField(TEXT("widget"), WidgetName);
+	Result->SetStringField(TEXT("function"), FunctionName);
+	return Result;
+}
+
+// =========================================================================
+// Tier 2: Content & Styling
+// =========================================================================
+
+TSharedPtr<FJsonObject> FWidgetCommands::HandleSetWidgetText(const TSharedPtr<FJsonObject>& Params)
+{
+	FString BlueprintName = Params->GetStringField(TEXT("blueprint_name"));
+	FString BlueprintPath = Params->HasField(TEXT("blueprint_path")) ? Params->GetStringField(TEXT("blueprint_path")) : TEXT("/Game/");
+	FString WidgetName = Params->GetStringField(TEXT("widget_name"));
+	FString Text = Params->GetStringField(TEXT("text"));
+
+	UWidgetBlueprint* WBP = FindWidgetBlueprint(BlueprintName, BlueprintPath);
+	if (!WBP) return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *BlueprintName));
+
+	UWidget* Widget = FindWidgetByName(WBP, WidgetName);
+	if (!Widget) return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget '%s' not found"), *WidgetName));
+
+	// Handle TextBlock
+	if (UTextBlock* TextBlock = Cast<UTextBlock>(Widget))
+	{
+		TextBlock->SetText(FText::FromString(Text));
+	}
+	// Handle EditableTextBox
+	else if (UEditableTextBox* EditText = Cast<UEditableTextBox>(Widget))
+	{
+		EditText->SetText(FText::FromString(Text));
+	}
+	else
+	{
+		// Try generic Text property
+		FProperty* TextProp = Widget->GetClass()->FindPropertyByName(TEXT("Text"));
+		if (TextProp)
+		{
+			FTextProperty* FTextProp = CastField<FTextProperty>(TextProp);
+			if (FTextProp)
+			{
+				FTextProp->SetPropertyValue_InContainer(Widget, FText::FromString(Text));
+			}
+		}
+		else
+		{
+			return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget '%s' has no Text property"), *WidgetName));
+		}
+	}
+
+	FKismetEditorUtilities::CompileBlueprint(WBP);
+	WBP->GetPackage()->MarkPackageDirty();
+
+	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+	Result->SetBoolField(TEXT("success"), true);
+	Result->SetStringField(TEXT("widget"), WidgetName);
+	Result->SetStringField(TEXT("text"), Text);
+	return Result;
+}
+
+TSharedPtr<FJsonObject> FWidgetCommands::HandleSetWidgetColor(const TSharedPtr<FJsonObject>& Params)
+{
+	FString BlueprintName = Params->GetStringField(TEXT("blueprint_name"));
+	FString BlueprintPath = Params->HasField(TEXT("blueprint_path")) ? Params->GetStringField(TEXT("blueprint_path")) : TEXT("/Game/");
+	FString WidgetName = Params->GetStringField(TEXT("widget_name"));
+	FString PropertyName = Params->HasField(TEXT("property_name")) ? Params->GetStringField(TEXT("property_name")) : TEXT("ColorAndOpacity");
+
+	UWidgetBlueprint* WBP = FindWidgetBlueprint(BlueprintName, BlueprintPath);
+	if (!WBP) return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *BlueprintName));
+
+	UWidget* Widget = FindWidgetByName(WBP, WidgetName);
+	if (!Widget) return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget '%s' not found"), *WidgetName));
+
+	FLinearColor Color = FLinearColor::White;
+
+	// Parse hex color
+	if (Params->HasField(TEXT("hex")))
+	{
+		FString Hex = Params->GetStringField(TEXT("hex"));
+		Color = FColor::FromHex(Hex);
+	}
+	// Parse RGBA array
+	else if (Params->HasField(TEXT("color")))
+	{
+		const TArray<TSharedPtr<FJsonValue>>* ColorArray;
+		if (Params->TryGetArrayField(TEXT("color"), ColorArray) && ColorArray->Num() >= 3)
+		{
+			Color.R = (*ColorArray)[0]->AsNumber();
+			Color.G = (*ColorArray)[1]->AsNumber();
+			Color.B = (*ColorArray)[2]->AsNumber();
+			Color.A = ColorArray->Num() >= 4 ? (*ColorArray)[3]->AsNumber() : 1.0f;
+		}
+	}
+
+	// Set via property reflection
+	FProperty* Prop = Widget->GetClass()->FindPropertyByName(FName(*PropertyName));
+	if (Prop)
+	{
+		FStructProperty* StructProp = CastField<FStructProperty>(Prop);
+		if (StructProp)
+		{
+			void* ValuePtr = StructProp->ContainerPtrToValuePtr<void>(Widget);
+			if (StructProp->Struct == TBaseStructure<FLinearColor>::Get())
+			{
+				*static_cast<FLinearColor*>(ValuePtr) = Color;
+			}
+			else if (StructProp->Struct == TBaseStructure<FSlateColor>::Get())
+			{
+				*static_cast<FSlateColor*>(ValuePtr) = FSlateColor(Color);
+			}
+			else
+			{
+				return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Property '%s' is not a color type"), *PropertyName));
+			}
+		}
+	}
+	else
+	{
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Property '%s' not found"), *PropertyName));
+	}
+
+	FKismetEditorUtilities::CompileBlueprint(WBP);
+	WBP->GetPackage()->MarkPackageDirty();
+
+	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+	Result->SetBoolField(TEXT("success"), true);
+	Result->SetStringField(TEXT("widget"), WidgetName);
+	Result->SetStringField(TEXT("property"), PropertyName);
+	TArray<TSharedPtr<FJsonValue>> ColorArr;
+	ColorArr.Add(MakeShared<FJsonValueNumber>(Color.R));
+	ColorArr.Add(MakeShared<FJsonValueNumber>(Color.G));
+	ColorArr.Add(MakeShared<FJsonValueNumber>(Color.B));
+	ColorArr.Add(MakeShared<FJsonValueNumber>(Color.A));
+	Result->SetArrayField(TEXT("color"), ColorArr);
+	return Result;
+}
+
+TSharedPtr<FJsonObject> FWidgetCommands::HandleSetWidgetBrush(const TSharedPtr<FJsonObject>& Params)
+{
+	FString BlueprintName = Params->GetStringField(TEXT("blueprint_name"));
+	FString BlueprintPath = Params->HasField(TEXT("blueprint_path")) ? Params->GetStringField(TEXT("blueprint_path")) : TEXT("/Game/");
+	FString WidgetName = Params->GetStringField(TEXT("widget_name"));
+	FString PropertyName = Params->HasField(TEXT("property_name")) ? Params->GetStringField(TEXT("property_name")) : TEXT("Brush");
+	FString ResourcePath = Params->HasField(TEXT("resource_path")) ? Params->GetStringField(TEXT("resource_path")) : TEXT("");
+
+	UWidgetBlueprint* WBP = FindWidgetBlueprint(BlueprintName, BlueprintPath);
+	if (!WBP) return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *BlueprintName));
+
+	UWidget* Widget = FindWidgetByName(WBP, WidgetName);
+	if (!Widget) return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget '%s' not found"), *WidgetName));
+
+	FProperty* Prop = Widget->GetClass()->FindPropertyByName(FName(*PropertyName));
+	FStructProperty* StructProp = Prop ? CastField<FStructProperty>(Prop) : nullptr;
+	if (!StructProp || StructProp->Struct->GetName() != TEXT("SlateBrush"))
+	{
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Property '%s' is not a SlateBrush"), *PropertyName));
+	}
+
+	FSlateBrush* BrushPtr = StructProp->ContainerPtrToValuePtr<FSlateBrush>(Widget);
+	if (!BrushPtr) return FCommonUtils::CreateErrorResponse(TEXT("Failed to get brush pointer"));
+
+	if (!ResourcePath.IsEmpty())
+	{
+		UObject* Resource = UEditorAssetLibrary::LoadAsset(ResourcePath);
+		if (Resource)
+		{
+			BrushPtr->SetResourceObject(Resource);
+		}
+		else
+		{
+			return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Resource '%s' not found"), *ResourcePath));
+		}
+	}
+
+	if (Params->HasField(TEXT("image_size")))
+	{
+		FVector2D ImageSize = FCommonUtils::GetVector2DFromJson(Params, TEXT("image_size"));
+		BrushPtr->ImageSize = ImageSize;
+	}
+
+	if (Params->HasField(TEXT("tint")))
+	{
+		const TArray<TSharedPtr<FJsonValue>>* TintArr;
+		if (Params->TryGetArrayField(TEXT("tint"), TintArr) && TintArr->Num() >= 3)
+		{
+			BrushPtr->TintColor = FSlateColor(FLinearColor(
+				(*TintArr)[0]->AsNumber(), (*TintArr)[1]->AsNumber(), (*TintArr)[2]->AsNumber(),
+				TintArr->Num() >= 4 ? (*TintArr)[3]->AsNumber() : 1.0f));
+		}
+	}
+
+	FKismetEditorUtilities::CompileBlueprint(WBP);
+	WBP->GetPackage()->MarkPackageDirty();
+
+	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+	Result->SetBoolField(TEXT("success"), true);
+	Result->SetStringField(TEXT("widget"), WidgetName);
+	Result->SetStringField(TEXT("property"), PropertyName);
+	return Result;
+}
+
+TSharedPtr<FJsonObject> FWidgetCommands::HandleSetWidgetFont(const TSharedPtr<FJsonObject>& Params)
+{
+	FString BlueprintName = Params->GetStringField(TEXT("blueprint_name"));
+	FString BlueprintPath = Params->HasField(TEXT("blueprint_path")) ? Params->GetStringField(TEXT("blueprint_path")) : TEXT("/Game/");
+	FString WidgetName = Params->GetStringField(TEXT("widget_name"));
+	int32 Size = Params->HasField(TEXT("size")) ? Params->GetIntegerField(TEXT("size")) : 0;
+	FString FontStyle = Params->HasField(TEXT("font_style")) ? Params->GetStringField(TEXT("font_style")) : TEXT("");
+
+	UWidgetBlueprint* WBP = FindWidgetBlueprint(BlueprintName, BlueprintPath);
+	if (!WBP) return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *BlueprintName));
+
+	UWidget* Widget = FindWidgetByName(WBP, WidgetName);
+	if (!Widget) return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget '%s' not found"), *WidgetName));
+
+	// Find Font property
+	FProperty* Prop = Widget->GetClass()->FindPropertyByName(TEXT("Font"));
+	FStructProperty* StructProp = Prop ? CastField<FStructProperty>(Prop) : nullptr;
+	if (!StructProp)
+	{
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget '%s' has no Font property"), *WidgetName));
+	}
+
+	FSlateFontInfo* FontPtr = StructProp->ContainerPtrToValuePtr<FSlateFontInfo>(Widget);
+	if (!FontPtr) return FCommonUtils::CreateErrorResponse(TEXT("Failed to get font pointer"));
+
+	if (Size > 0)
+	{
+		FontPtr->Size = Size;
+	}
+	if (!FontStyle.IsEmpty())
+	{
+		FontPtr->TypefaceFontName = FName(*FontStyle);
+	}
+	if (Params->HasField(TEXT("font_path")))
+	{
+		FString FontPath = Params->GetStringField(TEXT("font_path"));
+		UObject* FontObj = UEditorAssetLibrary::LoadAsset(FontPath);
+		if (FontObj)
+		{
+			FontPtr->FontObject = FontObj;
+		}
+	}
+	if (Params->HasField(TEXT("letter_spacing")))
+	{
+		FontPtr->LetterSpacing = Params->GetIntegerField(TEXT("letter_spacing"));
+	}
+
+	FKismetEditorUtilities::CompileBlueprint(WBP);
+	WBP->GetPackage()->MarkPackageDirty();
+
+	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+	Result->SetBoolField(TEXT("success"), true);
+	Result->SetStringField(TEXT("widget"), WidgetName);
+	Result->SetNumberField(TEXT("size"), FontPtr->Size);
+	Result->SetStringField(TEXT("style"), FontPtr->TypefaceFontName.ToString());
+	return Result;
+}
+
+TSharedPtr<FJsonObject> FWidgetCommands::HandleSetWidgetPadding(const TSharedPtr<FJsonObject>& Params)
+{
+	FString BlueprintName = Params->GetStringField(TEXT("blueprint_name"));
+	FString BlueprintPath = Params->HasField(TEXT("blueprint_path")) ? Params->GetStringField(TEXT("blueprint_path")) : TEXT("/Game/");
+	FString WidgetName = Params->GetStringField(TEXT("widget_name"));
+	FString PropertyName = Params->HasField(TEXT("property_name")) ? Params->GetStringField(TEXT("property_name")) : TEXT("Padding");
+
+	UWidgetBlueprint* WBP = FindWidgetBlueprint(BlueprintName, BlueprintPath);
+	if (!WBP) return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *BlueprintName));
+
+	UWidget* Widget = FindWidgetByName(WBP, WidgetName);
+	if (!Widget) return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget '%s' not found"), *WidgetName));
+
+	FProperty* Prop = Widget->GetClass()->FindPropertyByName(FName(*PropertyName));
+	FStructProperty* StructProp = Prop ? CastField<FStructProperty>(Prop) : nullptr;
+	if (!StructProp)
+	{
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Property '%s' is not a Margin type"), *PropertyName));
+	}
+
+	FMargin* MarginPtr = StructProp->ContainerPtrToValuePtr<FMargin>(Widget);
+	if (!MarginPtr) return FCommonUtils::CreateErrorResponse(TEXT("Failed to get margin pointer"));
+
+	if (Params->HasField(TEXT("left"))) MarginPtr->Left = Params->GetNumberField(TEXT("left"));
+	if (Params->HasField(TEXT("top"))) MarginPtr->Top = Params->GetNumberField(TEXT("top"));
+	if (Params->HasField(TEXT("right"))) MarginPtr->Right = Params->GetNumberField(TEXT("right"));
+	if (Params->HasField(TEXT("bottom"))) MarginPtr->Bottom = Params->GetNumberField(TEXT("bottom"));
+
+	// Uniform padding shortcut
+	if (Params->HasField(TEXT("uniform")))
+	{
+		float Uniform = Params->GetNumberField(TEXT("uniform"));
+		*MarginPtr = FMargin(Uniform);
+	}
+
+	FKismetEditorUtilities::CompileBlueprint(WBP);
+	WBP->GetPackage()->MarkPackageDirty();
+
+	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+	Result->SetBoolField(TEXT("success"), true);
+	Result->SetStringField(TEXT("widget"), WidgetName);
+	Result->SetStringField(TEXT("property"), PropertyName);
+	Result->SetNumberField(TEXT("left"), MarginPtr->Left);
+	Result->SetNumberField(TEXT("top"), MarginPtr->Top);
+	Result->SetNumberField(TEXT("right"), MarginPtr->Right);
+	Result->SetNumberField(TEXT("bottom"), MarginPtr->Bottom);
+	return Result;
+}
+
+// =========================================================================
+// Tier 3: Animation
+// =========================================================================
+
+TSharedPtr<FJsonObject> FWidgetCommands::HandleCreateWidgetAnimation(const TSharedPtr<FJsonObject>& Params)
+{
+	FString BlueprintName = Params->GetStringField(TEXT("blueprint_name"));
+	FString BlueprintPath = Params->HasField(TEXT("blueprint_path")) ? Params->GetStringField(TEXT("blueprint_path")) : TEXT("/Game/");
+	FString AnimationName = Params->GetStringField(TEXT("animation_name"));
+	float Duration = Params->HasField(TEXT("duration")) ? Params->GetNumberField(TEXT("duration")) : 1.0f;
+
+	if (AnimationName.IsEmpty()) return FCommonUtils::CreateErrorResponse(TEXT("Missing 'animation_name' parameter"));
+
+	UWidgetBlueprint* WBP = FindWidgetBlueprint(BlueprintName, BlueprintPath);
+	if (!WBP) return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *BlueprintName));
+
+	// Check if animation already exists
+	for (UWidgetAnimation* Existing : WBP->Animations)
+	{
+		if (Existing && Existing->GetName() == AnimationName)
+		{
+			return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Animation '%s' already exists"), *AnimationName));
+		}
+	}
+
+	// Create animation
+	UWidgetAnimation* NewAnim = NewObject<UWidgetAnimation>(WBP, FName(*AnimationName), RF_Transactional);
+	if (!NewAnim) return FCommonUtils::CreateErrorResponse(TEXT("Failed to create animation"));
+
+	// Set up MovieScene with duration
+	UMovieScene* MovieScene = NewAnim->GetMovieScene();
+	if (MovieScene)
+	{
+		FFrameRate FrameRate = MovieScene->GetTickResolution();
+		FFrameNumber EndFrame = (Duration * FrameRate).FloorToFrame();
+		MovieScene->SetPlaybackRange(FFrameNumber(0), EndFrame.Value);
+	}
+
+	WBP->Animations.Add(NewAnim);
+
+	FBlueprintEditorUtils::MarkBlueprintAsModified(WBP);
+	FKismetEditorUtilities::CompileBlueprint(WBP);
+	WBP->GetPackage()->MarkPackageDirty();
+
+	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+	Result->SetBoolField(TEXT("success"), true);
+	Result->SetStringField(TEXT("animation_name"), AnimationName);
+	Result->SetNumberField(TEXT("duration"), Duration);
+	return Result;
+}
+
+TSharedPtr<FJsonObject> FWidgetCommands::HandlePlayAnimationNode(const TSharedPtr<FJsonObject>& Params)
+{
+	FString BlueprintName = Params->GetStringField(TEXT("blueprint_name"));
+	FString BlueprintPath = Params->HasField(TEXT("blueprint_path")) ? Params->GetStringField(TEXT("blueprint_path")) : TEXT("/Game/");
+	FString AnimationName = Params->GetStringField(TEXT("animation_name"));
+	FString Action = Params->HasField(TEXT("action")) ? Params->GetStringField(TEXT("action")) : TEXT("PlayForward");
+	FVector2D NodePosition = Params->HasField(TEXT("node_position"))
+		? FCommonUtils::GetVector2DFromJson(Params, TEXT("node_position")) : FVector2D(500, 0);
+
+	UWidgetBlueprint* WBP = FindWidgetBlueprint(BlueprintName, BlueprintPath);
+	if (!WBP) return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *BlueprintName));
+
+	// Map action to function name
+	FString FuncName;
+	if (Action == TEXT("PlayForward") || Action == TEXT("Play")) FuncName = TEXT("PlayAnimation");
+	else if (Action == TEXT("PlayReverse") || Action == TEXT("Reverse")) FuncName = TEXT("PlayAnimationReverse");
+	else if (Action == TEXT("Stop")) FuncName = TEXT("StopAnimation");
+	else if (Action == TEXT("Pause")) FuncName = TEXT("PauseAnimation");
+	else FuncName = TEXT("PlayAnimation");
+
+	UFunction* Func = UUserWidget::StaticClass()->FindFunctionByName(FName(*FuncName));
+	if (!Func) return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Function '%s' not found"), *FuncName));
+
+	UEdGraph* EventGraph = FCommonUtils::FindOrCreateEventGraph(WBP);
+	if (!EventGraph) return FCommonUtils::CreateErrorResponse(TEXT("EventGraph not found"));
+
+	UK2Node_CallFunction* FuncNode = FCommonUtils::CreateFunctionCallNode(EventGraph, Func, NodePosition);
+	if (!FuncNode) return FCommonUtils::CreateErrorResponse(TEXT("Failed to create play animation node"));
+
+	FBlueprintEditorUtils::MarkBlueprintAsModified(WBP);
+	FKismetEditorUtilities::CompileBlueprint(WBP);
+
+	TSharedPtr<FJsonObject> Result = FCommonUtils::CreateNodeResponse(FuncNode, true);
+	Result->SetStringField(TEXT("animation"), AnimationName);
+	Result->SetStringField(TEXT("action"), Action);
+	return Result;
+}
+
+TSharedPtr<FJsonObject> FWidgetCommands::HandleListWidgetAnimations(const TSharedPtr<FJsonObject>& Params)
+{
+	FString BlueprintName = Params->GetStringField(TEXT("blueprint_name"));
+	FString BlueprintPath = Params->HasField(TEXT("blueprint_path")) ? Params->GetStringField(TEXT("blueprint_path")) : TEXT("/Game/");
+
+	UWidgetBlueprint* WBP = FindWidgetBlueprint(BlueprintName, BlueprintPath);
+	if (!WBP) return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *BlueprintName));
+
+	TArray<TSharedPtr<FJsonValue>> AnimArray;
+	for (UWidgetAnimation* Anim : WBP->Animations)
+	{
+		if (!Anim) continue;
+		TSharedPtr<FJsonObject> AnimObj = MakeShared<FJsonObject>();
+		AnimObj->SetStringField(TEXT("name"), Anim->GetName());
+
+		UMovieScene* MovieScene = Anim->GetMovieScene();
+		if (MovieScene)
+		{
+			FFrameRate FrameRate = MovieScene->GetTickResolution();
+			TRange<FFrameNumber> Range = MovieScene->GetPlaybackRange();
+			float DurationSec = FrameRate.AsSeconds(FFrameTime(Range.Size<FFrameNumber>()));
+			AnimObj->SetNumberField(TEXT("duration"), DurationSec);
+			AnimObj->SetNumberField(TEXT("track_count"), MovieScene->GetMasterTracks().Num() + MovieScene->GetObjectBindings().Num());
+		}
+		AnimArray.Add(MakeShared<FJsonValueObject>(AnimObj));
+	}
+
+	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+	Result->SetBoolField(TEXT("success"), true);
+	Result->SetArrayField(TEXT("animations"), AnimArray);
+	Result->SetNumberField(TEXT("count"), AnimArray.Num());
+	return Result;
+}
+
+// =========================================================================
+// Tier 4: Atomic Batch Construction
+// =========================================================================
+
+UWidget* FWidgetCommands::BuildWidgetRecursive(UWidgetBlueprint* WBP, const TSharedPtr<FJsonObject>& WidgetSpec,
+	UPanelWidget* Parent, TMap<FString, UWidget*>& Registry, TArray<FString>& Errors)
+{
+	FString Name = WidgetSpec->GetStringField(TEXT("name"));
+	FString Type = WidgetSpec->GetStringField(TEXT("type"));
+
+	if (Name.IsEmpty() || Type.IsEmpty())
+	{
+		Errors.Add(TEXT("Widget spec missing 'name' or 'type'"));
+		return nullptr;
+	}
+
+	UClass* WidgetClass = ResolveWidgetClass(Type);
+	if (!WidgetClass)
+	{
+		Errors.Add(FString::Printf(TEXT("Unknown widget type: '%s'"), *Type));
+		return nullptr;
+	}
+
+	UWidget* NewWidget = WBP->WidgetTree->ConstructWidget<UWidget>(WidgetClass, *Name);
+	if (!NewWidget)
+	{
+		Errors.Add(FString::Printf(TEXT("Failed to create widget '%s' of type '%s'"), *Name, *Type));
+		return nullptr;
+	}
+
+	// Add to parent
+	if (Parent)
+	{
+		Parent->AddChild(NewWidget);
+	}
+
+	Registry.Add(Name, NewWidget);
+
+	// Apply slot properties
+	if (WidgetSpec->HasField(TEXT("slot")) && NewWidget->Slot)
+	{
+		const TSharedPtr<FJsonObject>* SlotObj;
+		if (WidgetSpec->TryGetObjectField(TEXT("slot"), SlotObj))
+		{
+			if (UCanvasPanelSlot* CanvasSlot = Cast<UCanvasPanelSlot>(NewWidget->Slot))
+			{
+				if ((*SlotObj)->HasField(TEXT("position")))
+					CanvasSlot->SetPosition(FCommonUtils::GetVector2DFromJson(*SlotObj, TEXT("position")));
+				if ((*SlotObj)->HasField(TEXT("size")))
+					CanvasSlot->SetSize(FCommonUtils::GetVector2DFromJson(*SlotObj, TEXT("size")));
+				if ((*SlotObj)->HasField(TEXT("z_order")))
+					CanvasSlot->SetZOrder((*SlotObj)->GetIntegerField(TEXT("z_order")));
+			}
+		}
+	}
+
+	// Apply properties
+	if (WidgetSpec->HasField(TEXT("properties")))
+	{
+		const TSharedPtr<FJsonObject>* PropsObj;
+		if (WidgetSpec->TryGetObjectField(TEXT("properties"), PropsObj))
+		{
+			for (auto& Pair : (*PropsObj)->Values)
+			{
+				FCommonUtils::SetObjectProperty(NewWidget, Pair.Key, Pair.Value->AsString());
+			}
+		}
+	}
+
+	// Apply text shortcut
+	if (WidgetSpec->HasField(TEXT("text")))
+	{
+		if (UTextBlock* TextBlock = Cast<UTextBlock>(NewWidget))
+		{
+			TextBlock->SetText(FText::FromString(WidgetSpec->GetStringField(TEXT("text"))));
+		}
+	}
+
+	// Recurse into children
+	if (WidgetSpec->HasField(TEXT("children")))
+	{
+		UPanelWidget* AsPanel = Cast<UPanelWidget>(NewWidget);
+		if (!AsPanel)
+		{
+			Errors.Add(FString::Printf(TEXT("Widget '%s' is not a panel but has children"), *Name));
+		}
+		else
+		{
+			const TArray<TSharedPtr<FJsonValue>>* ChildrenArr;
+			if (WidgetSpec->TryGetArrayField(TEXT("children"), ChildrenArr))
+			{
+				for (const auto& ChildVal : *ChildrenArr)
+				{
+					TSharedPtr<FJsonObject> ChildObj = ChildVal->AsObject();
+					if (ChildObj.IsValid())
+					{
+						BuildWidgetRecursive(WBP, ChildObj, AsPanel, Registry, Errors);
+					}
+				}
+			}
+		}
+	}
+
+	return NewWidget;
+}
+
+TSharedPtr<FJsonObject> FWidgetCommands::HandleBuildWidgetTree(const TSharedPtr<FJsonObject>& Params)
+{
+	FString BlueprintName = Params->GetStringField(TEXT("blueprint_name"));
+	FString BlueprintPath = Params->HasField(TEXT("blueprint_path")) ? Params->GetStringField(TEXT("blueprint_path")) : TEXT("/Game/");
+	bool bReplaceRoot = Params->HasField(TEXT("replace_root")) ? Params->GetBoolField(TEXT("replace_root")) : false;
+
+	UWidgetBlueprint* WBP = FindWidgetBlueprint(BlueprintName, BlueprintPath);
+	if (!WBP || !WBP->WidgetTree)
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *BlueprintName));
+
+	const TArray<TSharedPtr<FJsonValue>>* WidgetsArr;
+	if (!Params->TryGetArrayField(TEXT("widgets"), WidgetsArr) || WidgetsArr->Num() == 0)
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing or empty 'widgets' array"));
+
+	FScopedTransaction Transaction(FText::FromString(TEXT("MCP: Build Widget Tree")));
+
+	TMap<FString, UWidget*> Registry;
+	TArray<FString> Errors;
+
+	// Determine parent
+	UPanelWidget* RootParent = nullptr;
+	if (bReplaceRoot)
+	{
+		// Clear existing tree
+		if (WBP->WidgetTree->RootWidget)
+		{
+			WBP->WidgetTree->RemoveWidget(WBP->WidgetTree->RootWidget);
+			WBP->WidgetTree->RootWidget = nullptr;
+		}
+	}
+	else
+	{
+		RootParent = Cast<UPanelWidget>(WBP->WidgetTree->RootWidget);
+	}
+
+	for (const auto& WidgetVal : *WidgetsArr)
+	{
+		TSharedPtr<FJsonObject> WidgetObj = WidgetVal->AsObject();
+		if (!WidgetObj.IsValid()) continue;
+
+		UWidget* Built = BuildWidgetRecursive(WBP, WidgetObj, RootParent, Registry, Errors);
+
+		// If replacing root and this is the first widget, set as root
+		if (bReplaceRoot && !WBP->WidgetTree->RootWidget && Built)
+		{
+			WBP->WidgetTree->RootWidget = Built;
+			RootParent = Cast<UPanelWidget>(Built);
+		}
+	}
+
+	if (Errors.Num() > 0)
+	{
+		TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+		Result->SetBoolField(TEXT("success"), false);
+		TArray<TSharedPtr<FJsonValue>> ErrArr;
+		for (const FString& Err : Errors)
+		{
+			ErrArr.Add(MakeShared<FJsonValueString>(Err));
+		}
+		Result->SetArrayField(TEXT("errors"), ErrArr);
+		Result->SetNumberField(TEXT("widgets_created"), Registry.Num());
+		return Result;
+	}
+
+	FBlueprintEditorUtils::MarkBlueprintAsModified(WBP);
+	FKismetEditorUtilities::CompileBlueprint(WBP);
+	WBP->GetPackage()->MarkPackageDirty();
+
+	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+	Result->SetBoolField(TEXT("success"), true);
+	Result->SetNumberField(TEXT("widgets_created"), Registry.Num());
+
+	TArray<TSharedPtr<FJsonValue>> CreatedArr;
+	for (auto& Pair : Registry)
+	{
+		TSharedPtr<FJsonObject> W = MakeShared<FJsonObject>();
+		W->SetStringField(TEXT("name"), Pair.Key);
+		W->SetStringField(TEXT("class"), Pair.Value ? Pair.Value->GetClass()->GetName() : TEXT("None"));
+		CreatedArr.Add(MakeShared<FJsonValueObject>(W));
+	}
+	Result->SetArrayField(TEXT("widgets"), CreatedArr);
+	return Result;
+}
+
+UWidget* FWidgetCommands::CloneWidgetRecursive(UWidgetBlueprint* WBP, UWidget* Source, const FString& NamePrefix, UPanelWidget* NewParent)
+{
+	if (!Source || !WBP || !WBP->WidgetTree) return nullptr;
+
+	FString NewName = NamePrefix + TEXT("_") + Source->GetName();
+	UWidget* Clone = WBP->WidgetTree->ConstructWidget<UWidget>(Source->GetClass(), *NewName);
+	if (!Clone) return nullptr;
+
+	// Copy properties via UEngine::CopyPropertiesForUnrelatedObjects
+	UEngine::CopyPropertiesForUnrelatedObjects(Source, Clone);
+
+	if (NewParent)
+	{
+		NewParent->AddChild(Clone);
+	}
+
+	// Recurse children
+	if (UPanelWidget* SourcePanel = Cast<UPanelWidget>(Source))
+	{
+		UPanelWidget* ClonePanel = Cast<UPanelWidget>(Clone);
+		if (ClonePanel)
+		{
+			for (int32 i = 0; i < SourcePanel->GetChildrenCount(); i++)
+			{
+				UWidget* Child = SourcePanel->GetChildAt(i);
+				if (Child)
+				{
+					CloneWidgetRecursive(WBP, Child, NamePrefix, ClonePanel);
+				}
+			}
+		}
+	}
+
+	return Clone;
+}
+
+TSharedPtr<FJsonObject> FWidgetCommands::HandleCloneWidgetSubtree(const TSharedPtr<FJsonObject>& Params)
+{
+	FString BlueprintName = Params->GetStringField(TEXT("blueprint_name"));
+	FString BlueprintPath = Params->HasField(TEXT("blueprint_path")) ? Params->GetStringField(TEXT("blueprint_path")) : TEXT("/Game/");
+	FString SourceName = Params->GetStringField(TEXT("source_widget"));
+	FString NewPrefix = Params->GetStringField(TEXT("new_name"));
+	FString TargetParentName = Params->HasField(TEXT("target_parent")) ? Params->GetStringField(TEXT("target_parent")) : TEXT("");
+
+	UWidgetBlueprint* WBP = FindWidgetBlueprint(BlueprintName, BlueprintPath);
+	if (!WBP) return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *BlueprintName));
+
+	UWidget* Source = FindWidgetByName(WBP, SourceName);
+	if (!Source) return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Source widget '%s' not found"), *SourceName));
+
+	UPanelWidget* TargetParent = nullptr;
+	if (!TargetParentName.IsEmpty())
+	{
+		TargetParent = Cast<UPanelWidget>(FindWidgetByName(WBP, TargetParentName));
+		if (!TargetParent) return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Target parent '%s' not found or not a panel"), *TargetParentName));
+	}
+	else
+	{
+		TargetParent = Cast<UPanelWidget>(WBP->WidgetTree->RootWidget);
+	}
+
+	FScopedTransaction Transaction(FText::FromString(TEXT("MCP: Clone Widget Subtree")));
+	UWidget* Cloned = CloneWidgetRecursive(WBP, Source, NewPrefix, TargetParent);
+	if (!Cloned) return FCommonUtils::CreateErrorResponse(TEXT("Failed to clone widget subtree"));
+
+	FBlueprintEditorUtils::MarkBlueprintAsModified(WBP);
+	FKismetEditorUtilities::CompileBlueprint(WBP);
+	WBP->GetPackage()->MarkPackageDirty();
+
+	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+	Result->SetBoolField(TEXT("success"), true);
+	Result->SetStringField(TEXT("source"), SourceName);
+	Result->SetStringField(TEXT("cloned_root"), Cloned->GetName());
+	return Result;
+}
+
+// =========================================================================
+// Tier 5: Introspection
+// =========================================================================
+
+TSharedPtr<FJsonObject> FWidgetCommands::WidgetToDetailedJson(UWidget* Widget, bool bIncludeProperties, bool bIncludeEvents)
+{
+	TSharedPtr<FJsonObject> Obj = WidgetToJson(Widget);
+	if (!Widget) return Obj;
+
+	if (bIncludeProperties)
+	{
+		TArray<TSharedPtr<FJsonValue>> PropsArr;
+		for (TFieldIterator<FProperty> It(Widget->GetClass()); It; ++It)
+		{
+			if (It->HasAnyPropertyFlags(CPF_Edit | CPF_BlueprintVisible))
+			{
+				TSharedPtr<FJsonObject> PropObj = MakeShared<FJsonObject>();
+				PropObj->SetStringField(TEXT("name"), It->GetName());
+				PropObj->SetStringField(TEXT("type"), It->GetCPPType());
+				PropObj->SetStringField(TEXT("category"), It->GetMetaData(TEXT("Category")));
+				PropsArr.Add(MakeShared<FJsonValueObject>(PropObj));
+			}
+		}
+		Obj->SetArrayField(TEXT("properties"), PropsArr);
+	}
+
+	if (bIncludeEvents)
+	{
+		TArray<TSharedPtr<FJsonValue>> EventsArr;
+		for (TFieldIterator<FMulticastDelegateProperty> It(Widget->GetClass()); It; ++It)
+		{
+			TSharedPtr<FJsonObject> EventObj = MakeShared<FJsonObject>();
+			EventObj->SetStringField(TEXT("name"), It->GetName());
+			EventsArr.Add(MakeShared<FJsonValueObject>(EventObj));
+		}
+		Obj->SetArrayField(TEXT("events"), EventsArr);
+	}
+
+	return Obj;
+}
+
+TSharedPtr<FJsonObject> FWidgetCommands::WidgetTreeToDetailedJson(UWidget* Widget, bool bIncludeProperties, bool bIncludeEvents)
+{
+	TSharedPtr<FJsonObject> Obj = WidgetToDetailedJson(Widget, bIncludeProperties, bIncludeEvents);
+	if (!Widget) return Obj;
+
+	if (UPanelWidget* Panel = Cast<UPanelWidget>(Widget))
+	{
+		TArray<TSharedPtr<FJsonValue>> Children;
+		for (int32 i = 0; i < Panel->GetChildrenCount(); i++)
+		{
+			UWidget* Child = Panel->GetChildAt(i);
+			if (Child)
+			{
+				Children.Add(MakeShared<FJsonValueObject>(WidgetTreeToDetailedJson(Child, bIncludeProperties, bIncludeEvents)));
+			}
+		}
+		Obj->SetArrayField(TEXT("children"), Children);
+	}
+
+	return Obj;
+}
+
+TSharedPtr<FJsonObject> FWidgetCommands::HandleAnalyzeWidgetHierarchy(const TSharedPtr<FJsonObject>& Params)
+{
+	FString BlueprintName = Params->GetStringField(TEXT("blueprint_name"));
+	FString BlueprintPath = Params->HasField(TEXT("blueprint_path")) ? Params->GetStringField(TEXT("blueprint_path")) : TEXT("/Game/");
+	bool bIncludeProperties = Params->HasField(TEXT("include_properties")) ? Params->GetBoolField(TEXT("include_properties")) : true;
+	bool bIncludeEvents = Params->HasField(TEXT("include_events")) ? Params->GetBoolField(TEXT("include_events")) : true;
+	bool bIncludeAnimations = Params->HasField(TEXT("include_animations")) ? Params->GetBoolField(TEXT("include_animations")) : true;
+
+	UWidgetBlueprint* WBP = FindWidgetBlueprint(BlueprintName, BlueprintPath);
+	if (!WBP) return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *BlueprintName));
+
+	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+	Result->SetBoolField(TEXT("success"), true);
+	Result->SetStringField(TEXT("name"), BlueprintName);
+	Result->SetStringField(TEXT("parent_class"), WBP->ParentClass ? WBP->ParentClass->GetName() : TEXT("Unknown"));
+
+	// Widget tree
+	if (WBP->WidgetTree && WBP->WidgetTree->RootWidget)
+	{
+		Result->SetObjectField(TEXT("widget_tree"), WidgetTreeToDetailedJson(WBP->WidgetTree->RootWidget, bIncludeProperties, bIncludeEvents));
+	}
+
+	// Animations
+	if (bIncludeAnimations)
+	{
+		TArray<TSharedPtr<FJsonValue>> AnimArr;
+		for (UWidgetAnimation* Anim : WBP->Animations)
+		{
+			if (!Anim) continue;
+			TSharedPtr<FJsonObject> AnimObj = MakeShared<FJsonObject>();
+			AnimObj->SetStringField(TEXT("name"), Anim->GetName());
+			UMovieScene* MS = Anim->GetMovieScene();
+			if (MS)
+			{
+				FFrameRate FR = MS->GetTickResolution();
+				TRange<FFrameNumber> R = MS->GetPlaybackRange();
+				AnimObj->SetNumberField(TEXT("duration"), FR.AsSeconds(FFrameTime(R.Size<FFrameNumber>())));
+			}
+			AnimArr.Add(MakeShared<FJsonValueObject>(AnimObj));
+		}
+		Result->SetArrayField(TEXT("animations"), AnimArr);
+	}
+
+	// Count total widgets
+	int32 WidgetCount = 0;
+	if (WBP->WidgetTree)
+	{
+		WBP->WidgetTree->ForEachWidget([&](UWidget*) { WidgetCount++; });
+	}
+	Result->SetNumberField(TEXT("total_widgets"), WidgetCount);
+
+	return Result;
+}
+
+TSharedPtr<FJsonObject> FWidgetCommands::HandleGetWidgetTypeInfo(const TSharedPtr<FJsonObject>& Params)
+{
+	FString WidgetType = Params->GetStringField(TEXT("widget_type"));
+	if (WidgetType.IsEmpty()) return FCommonUtils::CreateErrorResponse(TEXT("Missing 'widget_type' parameter"));
+
+	UClass* WidgetClass = ResolveWidgetClass(WidgetType);
+	if (!WidgetClass) return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget type '%s' not found"), *WidgetType));
+
+	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+	Result->SetBoolField(TEXT("success"), true);
+	Result->SetStringField(TEXT("type"), WidgetType);
+	Result->SetStringField(TEXT("class_name"), WidgetClass->GetName());
+	Result->SetStringField(TEXT("parent_class"), WidgetClass->GetSuperClass() ? WidgetClass->GetSuperClass()->GetName() : TEXT("None"));
+	Result->SetBoolField(TEXT("is_panel"), WidgetClass->IsChildOf(UPanelWidget::StaticClass()));
+
+	// Properties
+	TArray<TSharedPtr<FJsonValue>> PropsArr;
+	for (TFieldIterator<FProperty> It(WidgetClass); It; ++It)
+	{
+		if (It->HasAnyPropertyFlags(CPF_Edit | CPF_BlueprintVisible))
+		{
+			TSharedPtr<FJsonObject> PropObj = MakeShared<FJsonObject>();
+			PropObj->SetStringField(TEXT("name"), It->GetName());
+			PropObj->SetStringField(TEXT("type"), It->GetCPPType());
+			PropObj->SetBoolField(TEXT("editable"), It->HasAnyPropertyFlags(CPF_Edit));
+			PropsArr.Add(MakeShared<FJsonValueObject>(PropObj));
+		}
+	}
+	Result->SetArrayField(TEXT("properties"), PropsArr);
+
+	// Events
+	TArray<TSharedPtr<FJsonValue>> EventsArr;
+	for (TFieldIterator<FMulticastDelegateProperty> It(WidgetClass); It; ++It)
+	{
+		TSharedPtr<FJsonObject> EventObj = MakeShared<FJsonObject>();
+		EventObj->SetStringField(TEXT("name"), It->GetName());
+		EventsArr.Add(MakeShared<FJsonValueObject>(EventObj));
+	}
+	Result->SetArrayField(TEXT("events"), EventsArr);
+
+	return Result;
+}
+
+TSharedPtr<FJsonObject> FWidgetCommands::HandleSearchWidgets(const TSharedPtr<FJsonObject>& Params)
+{
+	FString BlueprintName = Params->GetStringField(TEXT("blueprint_name"));
+	FString BlueprintPath = Params->HasField(TEXT("blueprint_path")) ? Params->GetStringField(TEXT("blueprint_path")) : TEXT("/Game/");
+	FString ClassFilter = Params->HasField(TEXT("class_filter")) ? Params->GetStringField(TEXT("class_filter")) : TEXT("");
+	FString NamePattern = Params->HasField(TEXT("name_pattern")) ? Params->GetStringField(TEXT("name_pattern")) : TEXT("");
+
+	UWidgetBlueprint* WBP = FindWidgetBlueprint(BlueprintName, BlueprintPath);
+	if (!WBP || !WBP->WidgetTree)
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *BlueprintName));
+
+	UClass* FilterClass = nullptr;
+	if (!ClassFilter.IsEmpty())
+	{
+		FilterClass = ResolveWidgetClass(ClassFilter);
+	}
+
+	TArray<TSharedPtr<FJsonValue>> MatchesArr;
+	WBP->WidgetTree->ForEachWidget([&](UWidget* Widget)
+	{
+		if (!Widget) return;
+
+		bool bMatch = true;
+
+		if (FilterClass && !Widget->IsA(FilterClass))
+			bMatch = false;
+
+		if (bMatch && !NamePattern.IsEmpty())
+		{
+			if (!Widget->GetName().Contains(NamePattern))
+				bMatch = false;
+		}
+
+		if (bMatch)
+		{
+			MatchesArr.Add(MakeShared<FJsonValueObject>(WidgetToJson(Widget)));
+		}
+	});
+
+	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+	Result->SetBoolField(TEXT("success"), true);
+	Result->SetArrayField(TEXT("widgets"), MatchesArr);
+	Result->SetNumberField(TEXT("count"), MatchesArr.Num());
+	return Result;
 }
