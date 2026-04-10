@@ -728,4 +728,377 @@ def register_widget_tools(mcp: FastMCP):
             "tooltip_text": tooltip_text, "blueprint_path": blueprint_path
         })
 
+    # =========================================================================
+    # Tier 8: Variable Management
+    # =========================================================================
+
+    @mcp.tool()
+    def add_widget_variable(
+        blueprint_name: str,
+        variable_name: str,
+        variable_type: str,
+        sub_type: str = "",
+        is_array: bool = False,
+        blueprint_path: str = "/Game/UI/"
+    ) -> Dict[str, Any]:
+        """Add a member variable to a Widget Blueprint.
+
+        Args:
+            blueprint_name: Name of the Widget Blueprint
+            variable_name: Name for the new variable
+            variable_type: Type - Boolean, Int, Float, String, Text, Vector, Rotator, Transform, LinearColor, Object, Class, SoftObject, Struct
+            sub_type: Sub-type for Object/Class/Struct (e.g. "PlayerController", "MyStruct")
+            is_array: If True, creates an array of the specified type
+            blueprint_path: Asset path (default /Game/UI/)
+        """
+        for val, name in [(blueprint_name, "blueprint_name"), (variable_name, "variable_name"), (variable_type, "variable_type")]:
+            if error := validate_name(val, name):
+                return create_error_response(error)
+        params = {"blueprint_name": blueprint_name, "variable_name": variable_name,
+                  "variable_type": variable_type, "blueprint_path": blueprint_path}
+        if sub_type: params["sub_type"] = sub_type
+        if is_array: params["is_array"] = True
+        return get_unreal_client().execute_command("add_widget_variable", params)
+
+    @mcp.tool()
+    def delete_widget_variable(
+        blueprint_name: str,
+        variable_name: str,
+        blueprint_path: str = "/Game/UI/"
+    ) -> Dict[str, Any]:
+        """Remove a member variable from a Widget Blueprint."""
+        for val, name in [(blueprint_name, "blueprint_name"), (variable_name, "variable_name")]:
+            if error := validate_name(val, name):
+                return create_error_response(error)
+        return get_unreal_client().execute_command("delete_widget_variable", {
+            "blueprint_name": blueprint_name, "variable_name": variable_name,
+            "blueprint_path": blueprint_path
+        })
+
+    @mcp.tool()
+    def get_widget_variables(
+        blueprint_name: str,
+        blueprint_path: str = "/Game/UI/"
+    ) -> Dict[str, Any]:
+        """List all member variables in a Widget Blueprint. Returns name, type, category for each variable."""
+        if error := validate_name(blueprint_name, "blueprint_name"):
+            return create_error_response(error)
+        return get_unreal_client().execute_command("get_widget_variables", {
+            "blueprint_name": blueprint_name, "blueprint_path": blueprint_path
+        })
+
+    # =========================================================================
+    # Tier 9: Node Connection/Deletion
+    # =========================================================================
+
+    @mcp.tool()
+    def connect_widget_nodes(
+        blueprint_name: str,
+        source_node_id: str,
+        target_node_id: str,
+        connect_exec: bool = True,
+        connect_data: bool = False,
+        blueprint_path: str = "/Game/UI/"
+    ) -> Dict[str, Any]:
+        """Connect two nodes in a Widget Blueprint event graph.
+
+        Args:
+            blueprint_name: Name of the Widget Blueprint
+            source_node_id: GUID of the source node
+            target_node_id: GUID of the target node
+            connect_exec: Connect execution pins (default True)
+            connect_data: Connect data pins (default False)
+        """
+        for val, name in [(blueprint_name, "blueprint_name"), (source_node_id, "source_node_id"), (target_node_id, "target_node_id")]:
+            if error := validate_name(val, name):
+                return create_error_response(error)
+        return get_unreal_client().execute_command("connect_widget_nodes", {
+            "blueprint_name": blueprint_name, "source_node_id": source_node_id,
+            "target_node_id": target_node_id, "connect_exec": connect_exec,
+            "connect_data": connect_data, "blueprint_path": blueprint_path
+        })
+
+    @mcp.tool()
+    def disconnect_widget_nodes(
+        blueprint_name: str,
+        node_id: str,
+        pin_name: str,
+        blueprint_path: str = "/Game/UI/"
+    ) -> Dict[str, Any]:
+        """Disconnect all links from a specific pin on a node in a Widget Blueprint.
+
+        Args:
+            blueprint_name: Name of the Widget Blueprint
+            node_id: GUID of the node
+            pin_name: Name of the pin to disconnect
+        """
+        for val, name in [(blueprint_name, "blueprint_name"), (node_id, "node_id"), (pin_name, "pin_name")]:
+            if error := validate_name(val, name):
+                return create_error_response(error)
+        return get_unreal_client().execute_command("disconnect_widget_nodes", {
+            "blueprint_name": blueprint_name, "node_id": node_id,
+            "pin_name": pin_name, "blueprint_path": blueprint_path
+        })
+
+    @mcp.tool()
+    def delete_widget_node(
+        blueprint_name: str,
+        node_id: str,
+        blueprint_path: str = "/Game/UI/"
+    ) -> Dict[str, Any]:
+        """Delete a node from a Widget Blueprint event graph.
+
+        Args:
+            blueprint_name: Name of the Widget Blueprint
+            node_id: GUID of the node to delete
+        """
+        for val, name in [(blueprint_name, "blueprint_name"), (node_id, "node_id")]:
+            if error := validate_name(val, name):
+                return create_error_response(error)
+        return get_unreal_client().execute_command("delete_widget_node", {
+            "blueprint_name": blueprint_name, "node_id": node_id,
+            "blueprint_path": blueprint_path
+        })
+
+    # =========================================================================
+    # Tier 10: Flow Control & Custom Events
+    # =========================================================================
+
+    @mcp.tool()
+    def add_widget_flow_control(
+        blueprint_name: str,
+        control_type: str,
+        node_position: Optional[List[float]] = None,
+        graph_name: str = "",
+        blueprint_path: str = "/Game/UI/"
+    ) -> Dict[str, Any]:
+        """Add a flow control node to a Widget Blueprint event graph.
+
+        Args:
+            blueprint_name: Name of the Widget Blueprint
+            control_type: Type of flow control - branch, sequence, forloop, foreachloop, whileloop, doonce, multigate, flipflop, gate
+            node_position: [X, Y] position in graph (optional)
+            graph_name: Target graph name (default: EventGraph)
+        """
+        for val, name in [(blueprint_name, "blueprint_name"), (control_type, "control_type")]:
+            if error := validate_name(val, name):
+                return create_error_response(error)
+        params = {"blueprint_name": blueprint_name, "control_type": control_type, "blueprint_path": blueprint_path}
+        if node_position: params["node_position"] = node_position
+        if graph_name: params["graph_name"] = graph_name
+        return get_unreal_client().execute_command("add_widget_flow_control", params)
+
+    @mcp.tool()
+    def add_widget_custom_event(
+        blueprint_name: str,
+        event_name: str,
+        action: str = "define",
+        node_position: Optional[List[float]] = None,
+        graph_name: str = "",
+        blueprint_path: str = "/Game/UI/"
+    ) -> Dict[str, Any]:
+        """Add a custom event to a Widget Blueprint.
+
+        Args:
+            blueprint_name: Name of the Widget Blueprint
+            event_name: Name for the custom event
+            action: 'define' to create event definition, 'call' to create call node
+            node_position: [X, Y] position in graph (optional)
+            graph_name: Target graph name (default: EventGraph)
+        """
+        for val, name in [(blueprint_name, "blueprint_name"), (event_name, "event_name")]:
+            if error := validate_name(val, name):
+                return create_error_response(error)
+        params = {"blueprint_name": blueprint_name, "event_name": event_name,
+                  "action": action, "blueprint_path": blueprint_path}
+        if node_position: params["node_position"] = node_position
+        if graph_name: params["graph_name"] = graph_name
+        return get_unreal_client().execute_command("add_widget_custom_event", params)
+
+    @mcp.tool()
+    def add_widget_generic_node(
+        blueprint_name: str,
+        node_class: str,
+        node_position: Optional[List[float]] = None,
+        graph_name: str = "EventGraph",
+        blueprint_path: str = "/Game/UI/"
+    ) -> Dict[str, Any]:
+        """Add an arbitrary node by class name to a Widget Blueprint event graph.
+
+        Args:
+            blueprint_name: Name of the Widget Blueprint
+            node_class: UEdGraphNode class name (e.g. K2Node_MakeStruct, K2Node_DynamicCast)
+            node_position: [X, Y] position in graph (optional)
+            graph_name: Target graph name (default: EventGraph)
+        """
+        for val, name in [(blueprint_name, "blueprint_name"), (node_class, "node_class")]:
+            if error := validate_name(val, name):
+                return create_error_response(error)
+        params = {"blueprint_name": blueprint_name, "node_class": node_class,
+                  "graph_name": graph_name, "blueprint_path": blueprint_path}
+        if node_position: params["node_position"] = node_position
+        return get_unreal_client().execute_command("add_widget_generic_node", params)
+
+    # =========================================================================
+    # Tier 11: Pin Value Management
+    # =========================================================================
+
+    @mcp.tool()
+    def set_widget_pin_default(
+        blueprint_name: str,
+        node_id: str,
+        pin_name: str,
+        value: Any = None,
+        blueprint_path: str = "/Game/UI/"
+    ) -> Dict[str, Any]:
+        """Set the default value of a pin on a node in a Widget Blueprint.
+
+        Args:
+            blueprint_name: Name of the Widget Blueprint
+            node_id: GUID of the node
+            pin_name: Name of the pin
+            value: Value to set (string, number, bool, or array for vectors [X,Y,Z])
+        """
+        for val, name in [(blueprint_name, "blueprint_name"), (node_id, "node_id"), (pin_name, "pin_name")]:
+            if error := validate_name(val, name):
+                return create_error_response(error)
+        params = {"blueprint_name": blueprint_name, "node_id": node_id,
+                  "pin_name": pin_name, "blueprint_path": blueprint_path}
+        if value is not None: params["value"] = value
+        return get_unreal_client().execute_command("set_widget_pin_default", params)
+
+    @mcp.tool()
+    def get_widget_pin_value(
+        blueprint_name: str,
+        node_id: str,
+        pin_name: str,
+        blueprint_path: str = "/Game/UI/"
+    ) -> Dict[str, Any]:
+        """Get the default value and type of a pin on a node in a Widget Blueprint.
+
+        Args:
+            blueprint_name: Name of the Widget Blueprint
+            node_id: GUID of the node
+            pin_name: Name of the pin
+        """
+        for val, name in [(blueprint_name, "blueprint_name"), (node_id, "node_id"), (pin_name, "pin_name")]:
+            if error := validate_name(val, name):
+                return create_error_response(error)
+        return get_unreal_client().execute_command("get_widget_pin_value", {
+            "blueprint_name": blueprint_name, "node_id": node_id,
+            "pin_name": pin_name, "blueprint_path": blueprint_path
+        })
+
+    # =========================================================================
+    # Tier 12: Graph Introspection
+    # =========================================================================
+
+    @mcp.tool()
+    def list_widget_graph_nodes(
+        blueprint_name: str,
+        graph_name: str = "",
+        node_type: str = "",
+        node_title: str = "",
+        limit: int = 50,
+        blueprint_path: str = "/Game/UI/"
+    ) -> Dict[str, Any]:
+        """List nodes in a Widget Blueprint graph with optional filtering.
+
+        Args:
+            blueprint_name: Name of the Widget Blueprint
+            graph_name: Target graph (default: EventGraph)
+            node_type: Filter by type - Event, Function, Variable, FlowControl
+            node_title: Filter by title (substring match)
+            limit: Max nodes to return (default 50)
+        """
+        if error := validate_name(blueprint_name, "blueprint_name"):
+            return create_error_response(error)
+        params = {"blueprint_name": blueprint_name, "blueprint_path": blueprint_path, "limit": limit}
+        if graph_name: params["graph_name"] = graph_name
+        if node_type: params["node_type"] = node_type
+        if node_title: params["node_title"] = node_title
+        return get_unreal_client().execute_command("list_widget_graph_nodes", params)
+
+    @mcp.tool()
+    def list_widget_graphs(
+        blueprint_name: str,
+        blueprint_path: str = "/Game/UI/"
+    ) -> Dict[str, Any]:
+        """List all graphs in a Widget Blueprint (EventGraph, functions, etc.)."""
+        if error := validate_name(blueprint_name, "blueprint_name"):
+            return create_error_response(error)
+        return get_unreal_client().execute_command("list_widget_graphs", {
+            "blueprint_name": blueprint_name, "blueprint_path": blueprint_path
+        })
+
+    @mcp.tool()
+    def compile_widget_blueprint(
+        blueprint_name: str,
+        validate_only: bool = False,
+        blueprint_path: str = "/Game/UI/"
+    ) -> Dict[str, Any]:
+        """Compile a Widget Blueprint. Validates graphs and reports errors.
+
+        Args:
+            blueprint_name: Name of the Widget Blueprint
+            validate_only: If True, only validate without compiling
+        """
+        if error := validate_name(blueprint_name, "blueprint_name"):
+            return create_error_response(error)
+        return get_unreal_client().execute_command("compile_widget_blueprint", {
+            "blueprint_name": blueprint_name, "validate_only": validate_only,
+            "blueprint_path": blueprint_path
+        })
+
+    # =========================================================================
+    # Tier 13: Auxiliary
+    # =========================================================================
+
+    @mcp.tool()
+    def add_widget_comment_box(
+        blueprint_name: str,
+        comment_text: str,
+        position: Optional[List[float]] = None,
+        size: Optional[List[float]] = None,
+        graph_name: str = "",
+        blueprint_path: str = "/Game/UI/"
+    ) -> Dict[str, Any]:
+        """Add a comment box to a Widget Blueprint event graph for documentation.
+
+        Args:
+            blueprint_name: Name of the Widget Blueprint
+            comment_text: Text for the comment box
+            position: [X, Y] position in graph (optional)
+            size: [Width, Height] of comment box (default [400, 200])
+            graph_name: Target graph (default: EventGraph)
+        """
+        for val, name in [(blueprint_name, "blueprint_name"), (comment_text, "comment_text")]:
+            if error := validate_name(val, name):
+                return create_error_response(error)
+        params = {"blueprint_name": blueprint_name, "comment_text": comment_text, "blueprint_path": blueprint_path}
+        if position: params["position"] = position
+        if size: params["size"] = size
+        if graph_name: params["graph_name"] = graph_name
+        return get_unreal_client().execute_command("add_widget_comment_box", params)
+
+    @mcp.tool()
+    def add_widget_function_override(
+        blueprint_name: str,
+        function_name: str,
+        blueprint_path: str = "/Game/UI/"
+    ) -> Dict[str, Any]:
+        """Override a parent function in a Widget Blueprint (e.g. NativeConstruct, NativeTick, NativeDestruct).
+
+        Args:
+            blueprint_name: Name of the Widget Blueprint
+            function_name: Function to override - NativeConstruct, NativeTick, NativeDestruct, NativeOnInitialized
+        """
+        for val, name in [(blueprint_name, "blueprint_name"), (function_name, "function_name")]:
+            if error := validate_name(val, name):
+                return create_error_response(error)
+        return get_unreal_client().execute_command("add_widget_function_override", {
+            "blueprint_name": blueprint_name, "function_name": function_name,
+            "blueprint_path": blueprint_path
+        })
+
     log_info("Widget tools registered successfully")

@@ -49,6 +49,17 @@
 #include "EdGraphSchema_K2.h"
 #include "ScopedTransaction.h"
 #include "Animation/WidgetAnimation.h"
+#include "K2Node_IfThenElse.h"
+#include "K2Node_ExecutionSequence.h"
+#include "K2Node_MacroInstance.h"
+#include "K2Node_CustomEvent.h"
+#include "K2Node_VariableGet.h"
+#include "K2Node_FunctionEntry.h"
+#include "EdGraphNode_Comment.h"
+#include "K2Node_Event.h"
+#include "K2Node_MakeStruct.h"
+#include "K2Node_BreakStruct.h"
+#include "K2Node_SwitchEnum.h"
 #include "Styling/SlateBrush.h"
 #include "Styling/SlateColor.h"
 #include "Fonts/SlateFontInfo.h"
@@ -189,6 +200,76 @@ TSharedPtr<FJsonObject> FWidgetCommands::HandleCommand(const FString& CommandTyp
 	else if (CommandType == TEXT("set_widget_tooltip"))
 	{
 		return HandleSetWidgetTooltip(Params);
+	}
+	// Tier 8: Variable Management
+	else if (CommandType == TEXT("add_widget_variable"))
+	{
+		return HandleAddWidgetVariable(Params);
+	}
+	else if (CommandType == TEXT("delete_widget_variable"))
+	{
+		return HandleDeleteWidgetVariable(Params);
+	}
+	else if (CommandType == TEXT("get_widget_variables"))
+	{
+		return HandleGetWidgetVariables(Params);
+	}
+	// Tier 9: Node Connection/Deletion
+	else if (CommandType == TEXT("connect_widget_nodes"))
+	{
+		return HandleConnectWidgetNodes(Params);
+	}
+	else if (CommandType == TEXT("disconnect_widget_nodes"))
+	{
+		return HandleDisconnectWidgetNodes(Params);
+	}
+	else if (CommandType == TEXT("delete_widget_node"))
+	{
+		return HandleDeleteWidgetNode(Params);
+	}
+	// Tier 10: Flow Control & Custom Events
+	else if (CommandType == TEXT("add_widget_flow_control"))
+	{
+		return HandleAddWidgetFlowControl(Params);
+	}
+	else if (CommandType == TEXT("add_widget_custom_event"))
+	{
+		return HandleAddWidgetCustomEvent(Params);
+	}
+	else if (CommandType == TEXT("add_widget_generic_node"))
+	{
+		return HandleAddWidgetGenericNode(Params);
+	}
+	// Tier 11: Pin Value Management
+	else if (CommandType == TEXT("set_widget_pin_default"))
+	{
+		return HandleSetWidgetPinDefault(Params);
+	}
+	else if (CommandType == TEXT("get_widget_pin_value"))
+	{
+		return HandleGetWidgetPinValue(Params);
+	}
+	// Tier 12: Graph Introspection
+	else if (CommandType == TEXT("list_widget_graph_nodes"))
+	{
+		return HandleListWidgetGraphNodes(Params);
+	}
+	else if (CommandType == TEXT("list_widget_graphs"))
+	{
+		return HandleListWidgetGraphs(Params);
+	}
+	else if (CommandType == TEXT("compile_widget_blueprint"))
+	{
+		return HandleCompileWidgetBlueprint(Params);
+	}
+	// Tier 13: Auxiliary
+	else if (CommandType == TEXT("add_widget_comment_box"))
+	{
+		return HandleAddWidgetCommentBox(Params);
+	}
+	else if (CommandType == TEXT("add_widget_function_override"))
+	{
+		return HandleAddWidgetFunctionOverride(Params);
 	}
 
 	return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Unknown widget command: %s"), *CommandType));
@@ -1664,7 +1745,8 @@ UWidget* FWidgetCommands::BuildWidgetRecursive(UWidgetBlueprint* WBP, const TSha
 		{
 			for (auto& Pair : (*PropsObj)->Values)
 			{
-				FCommonUtils::SetObjectProperty(NewWidget, Pair.Key, Pair.Value->AsString());
+				FString PropError;
+					FCommonUtils::SetObjectProperty(NewWidget, Pair.Key, Pair.Value, PropError);
 			}
 		}
 	}
@@ -2403,4 +2485,1081 @@ TSharedPtr<FJsonObject> FWidgetCommands::HandleSetWidgetTooltip(const TSharedPtr
 	Result->SetStringField(TEXT("widget"), WidgetName);
 	Result->SetStringField(TEXT("tooltip"), TooltipText);
 	return Result;
+}
+
+// ============================================================================
+// Tier 8: Variable Management
+// ============================================================================
+
+TSharedPtr<FJsonObject> FWidgetCommands::HandleAddWidgetVariable(const TSharedPtr<FJsonObject>& Params)
+{
+	FString BlueprintName;
+	if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name'"));
+
+	FString VariableName;
+	if (!Params->TryGetStringField(TEXT("variable_name"), VariableName))
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing 'variable_name'"));
+
+	FString VariableType;
+	if (!Params->TryGetStringField(TEXT("variable_type"), VariableType))
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing 'variable_type'"));
+
+	FString BlueprintPath = TEXT("/Game/UI/");
+	Params->TryGetStringField(TEXT("blueprint_path"), BlueprintPath);
+
+	UWidgetBlueprint* WBP = FindWidgetBlueprint(BlueprintName, BlueprintPath);
+	if (!WBP) return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *BlueprintName));
+
+	UBlueprint* Blueprint = Cast<UBlueprint>(WBP);
+
+	FString SubType;
+	Params->TryGetStringField(TEXT("sub_type"), SubType);
+
+	if (VariableType == TEXT("Actor") || VariableType == TEXT("Pawn") || VariableType == TEXT("Character") ||
+		VariableType == TEXT("Controller") || VariableType == TEXT("PlayerController") || VariableType == TEXT("ActorComponent"))
+	{
+		SubType = VariableType;
+		VariableType = TEXT("Object");
+	}
+
+	FEdGraphPinType PinType;
+
+	if (VariableType == TEXT("Boolean"))
+	{
+		PinType.PinCategory = UEdGraphSchema_K2::PC_Boolean;
+	}
+	else if (VariableType == TEXT("Integer") || VariableType == TEXT("Int"))
+	{
+		PinType.PinCategory = UEdGraphSchema_K2::PC_Int;
+	}
+	else if (VariableType == TEXT("Float") || VariableType == TEXT("Double"))
+	{
+		PinType.PinCategory = UEdGraphSchema_K2::PC_Real;
+		PinType.PinSubCategory = VariableType == TEXT("Double") ? TEXT("double") : TEXT("float");
+	}
+	else if (VariableType == TEXT("String"))
+	{
+		PinType.PinCategory = UEdGraphSchema_K2::PC_String;
+	}
+	else if (VariableType == TEXT("Name"))
+	{
+		PinType.PinCategory = UEdGraphSchema_K2::PC_Name;
+	}
+	else if (VariableType == TEXT("Text"))
+	{
+		PinType.PinCategory = UEdGraphSchema_K2::PC_Text;
+	}
+	else if (VariableType == TEXT("Vector"))
+	{
+		PinType.PinCategory = UEdGraphSchema_K2::PC_Struct;
+		PinType.PinSubCategoryObject = TBaseStructure<FVector>::Get();
+	}
+	else if (VariableType == TEXT("Rotator"))
+	{
+		PinType.PinCategory = UEdGraphSchema_K2::PC_Struct;
+		PinType.PinSubCategoryObject = TBaseStructure<FRotator>::Get();
+	}
+	else if (VariableType == TEXT("Transform"))
+	{
+		PinType.PinCategory = UEdGraphSchema_K2::PC_Struct;
+		PinType.PinSubCategoryObject = TBaseStructure<FTransform>::Get();
+	}
+	else if (VariableType == TEXT("LinearColor") || VariableType == TEXT("Color"))
+	{
+		PinType.PinCategory = UEdGraphSchema_K2::PC_Struct;
+		PinType.PinSubCategoryObject = TBaseStructure<FLinearColor>::Get();
+	}
+	else if (VariableType == TEXT("Object"))
+	{
+		PinType.PinCategory = UEdGraphSchema_K2::PC_Object;
+		if (!SubType.IsEmpty())
+		{
+			UClass* ObjClass = FCommonUtils::FindClassByName(SubType);
+			if (!ObjClass) return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Sub-type class not found: %s"), *SubType));
+			PinType.PinSubCategoryObject = ObjClass;
+		}
+		else
+		{
+			PinType.PinSubCategoryObject = UObject::StaticClass();
+		}
+	}
+	else if (VariableType == TEXT("Class"))
+	{
+		PinType.PinCategory = UEdGraphSchema_K2::PC_Class;
+		if (!SubType.IsEmpty())
+		{
+			UClass* MetaClass = FCommonUtils::FindClassByName(SubType);
+			if (!MetaClass) return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Class sub_type not found: %s"), *SubType));
+			PinType.PinSubCategoryObject = MetaClass;
+		}
+		else
+		{
+			PinType.PinSubCategoryObject = UObject::StaticClass();
+		}
+	}
+	else if (VariableType == TEXT("SoftObject"))
+	{
+		PinType.PinCategory = UEdGraphSchema_K2::PC_SoftObject;
+		if (!SubType.IsEmpty())
+		{
+			UClass* ObjClass = FCommonUtils::FindClassByName(SubType);
+			if (ObjClass) PinType.PinSubCategoryObject = ObjClass;
+		}
+	}
+	else if (VariableType == TEXT("Struct"))
+	{
+		if (SubType.IsEmpty()) return FCommonUtils::CreateErrorResponse(TEXT("Struct type requires 'sub_type' parameter"));
+		UScriptStruct* FoundStruct = FindFirstObject<UScriptStruct>(*SubType, EFindFirstObjectOptions::None);
+		if (!FoundStruct) return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Struct not found: %s"), *SubType));
+		PinType.PinCategory = UEdGraphSchema_K2::PC_Struct;
+		PinType.PinSubCategoryObject = FoundStruct;
+	}
+	else
+	{
+		UScriptStruct* FoundStruct = FindFirstObject<UScriptStruct>(*VariableType, EFindFirstObjectOptions::None);
+		if (FoundStruct)
+		{
+			PinType.PinCategory = UEdGraphSchema_K2::PC_Struct;
+			PinType.PinSubCategoryObject = FoundStruct;
+		}
+		else
+		{
+			return FCommonUtils::CreateErrorResponse(FString::Printf(
+				TEXT("Unsupported variable type: %s. Supported: Boolean, Int, Float, String, Text, Vector, Rotator, Transform, LinearColor, Object, Class, SoftObject, Struct"), *VariableType));
+		}
+	}
+
+	bool bIsArray = false;
+	Params->TryGetBoolField(TEXT("is_array"), bIsArray);
+	if (bIsArray) PinType.ContainerType = EPinContainerType::Array;
+
+	FBlueprintEditorUtils::AddMemberVariable(Blueprint, FName(*VariableName), PinType);
+	FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
+
+	TSharedPtr<FJsonObject> ResultObj = MakeShared<FJsonObject>();
+	ResultObj->SetBoolField(TEXT("success"), true);
+	ResultObj->SetStringField(TEXT("variable_name"), VariableName);
+	ResultObj->SetStringField(TEXT("variable_type"), VariableType);
+	ResultObj->SetBoolField(TEXT("is_array"), bIsArray);
+	return ResultObj;
+}
+
+TSharedPtr<FJsonObject> FWidgetCommands::HandleDeleteWidgetVariable(const TSharedPtr<FJsonObject>& Params)
+{
+	FString BlueprintName;
+	if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name'"));
+
+	FString VariableName;
+	if (!Params->TryGetStringField(TEXT("variable_name"), VariableName))
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing 'variable_name'"));
+
+	FString BlueprintPath = TEXT("/Game/UI/");
+	Params->TryGetStringField(TEXT("blueprint_path"), BlueprintPath);
+
+	UWidgetBlueprint* WBP = FindWidgetBlueprint(BlueprintName, BlueprintPath);
+	if (!WBP) return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *BlueprintName));
+
+	UBlueprint* Blueprint = Cast<UBlueprint>(WBP);
+	FName VarName(*VariableName);
+	int32 VarIndex = FBlueprintEditorUtils::FindNewVariableIndex(Blueprint, VarName);
+	if (VarIndex == INDEX_NONE)
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Variable not found: %s"), *VariableName));
+
+	FBlueprintEditorUtils::RemoveMemberVariable(Blueprint, VarName);
+	FKismetEditorUtilities::CompileBlueprint(WBP);
+
+	TSharedPtr<FJsonObject> ResultObj = MakeShared<FJsonObject>();
+	ResultObj->SetBoolField(TEXT("success"), true);
+	ResultObj->SetStringField(TEXT("removed_variable"), VariableName);
+	return ResultObj;
+}
+
+TSharedPtr<FJsonObject> FWidgetCommands::HandleGetWidgetVariables(const TSharedPtr<FJsonObject>& Params)
+{
+	FString BlueprintName;
+	if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name'"));
+
+	FString BlueprintPath = TEXT("/Game/UI/");
+	Params->TryGetStringField(TEXT("blueprint_path"), BlueprintPath);
+
+	UWidgetBlueprint* WBP = FindWidgetBlueprint(BlueprintName, BlueprintPath);
+	if (!WBP) return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *BlueprintName));
+
+	UBlueprint* Blueprint = Cast<UBlueprint>(WBP);
+	TArray<TSharedPtr<FJsonValue>> Variables;
+
+	for (const FBPVariableDescription& VarDesc : Blueprint->NewVariables)
+	{
+		TSharedPtr<FJsonObject> VarObj = MakeShared<FJsonObject>();
+		VarObj->SetStringField(TEXT("name"), VarDesc.VarName.ToString());
+		VarObj->SetStringField(TEXT("type"), VarDesc.VarType.PinCategory.ToString());
+		if (VarDesc.VarType.PinSubCategoryObject.IsValid())
+			VarObj->SetStringField(TEXT("object_type"), VarDesc.VarType.PinSubCategoryObject->GetName());
+		VarObj->SetStringField(TEXT("category"), VarDesc.Category.ToString());
+		VarObj->SetBoolField(TEXT("is_array"), VarDesc.VarType.IsArray());
+		Variables.Add(MakeShared<FJsonValueObject>(VarObj));
+	}
+
+	TSharedPtr<FJsonObject> ResultObj = MakeShared<FJsonObject>();
+	ResultObj->SetBoolField(TEXT("success"), true);
+	ResultObj->SetStringField(TEXT("blueprint"), BlueprintName);
+	ResultObj->SetArrayField(TEXT("variables"), Variables);
+	ResultObj->SetNumberField(TEXT("count"), Variables.Num());
+	return ResultObj;
+}
+
+// ============================================================================
+// Tier 9: Node Connection/Deletion
+// ============================================================================
+
+TSharedPtr<FJsonObject> FWidgetCommands::HandleConnectWidgetNodes(const TSharedPtr<FJsonObject>& Params)
+{
+	FString BlueprintName;
+	if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name'"));
+
+	FString SourceNodeId;
+	if (!Params->TryGetStringField(TEXT("source_node_id"), SourceNodeId))
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing 'source_node_id'"));
+
+	FString TargetNodeId;
+	if (!Params->TryGetStringField(TEXT("target_node_id"), TargetNodeId))
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing 'target_node_id'"));
+
+	bool bConnectExec = true;
+	bool bConnectData = false;
+	Params->TryGetBoolField(TEXT("connect_exec"), bConnectExec);
+	Params->TryGetBoolField(TEXT("connect_data"), bConnectData);
+
+	FString BlueprintPath = TEXT("/Game/UI/");
+	Params->TryGetStringField(TEXT("blueprint_path"), BlueprintPath);
+
+	UWidgetBlueprint* WBP = FindWidgetBlueprint(BlueprintName, BlueprintPath);
+	if (!WBP) return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *BlueprintName));
+
+	UBlueprint* Blueprint = Cast<UBlueprint>(WBP);
+
+	UEdGraphNode* SourceNode = FCommonUtils::FindNodeByGuidInBlueprint(Blueprint, SourceNodeId);
+	if (!SourceNode) return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Source node not found: %s"), *SourceNodeId));
+
+	UEdGraphNode* TargetNode = FCommonUtils::FindNodeByGuidInBlueprint(Blueprint, TargetNodeId);
+	if (!TargetNode) return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Target node not found: %s"), *TargetNodeId));
+
+	UEdGraph* Graph = SourceNode->GetGraph();
+	if (!Graph) return FCommonUtils::CreateErrorResponse(TEXT("Failed to get graph from source node"));
+
+	bool bConnected = FCommonUtils::TryAutoConnectNodes(Graph, SourceNode, TargetNode, bConnectExec, bConnectData);
+	FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
+
+	TSharedPtr<FJsonObject> ResultObj = MakeShared<FJsonObject>();
+	ResultObj->SetBoolField(TEXT("success"), true);
+	ResultObj->SetBoolField(TEXT("connected"), bConnected);
+	ResultObj->SetStringField(TEXT("source_node_id"), SourceNodeId);
+	ResultObj->SetStringField(TEXT("target_node_id"), TargetNodeId);
+	return ResultObj;
+}
+
+TSharedPtr<FJsonObject> FWidgetCommands::HandleDisconnectWidgetNodes(const TSharedPtr<FJsonObject>& Params)
+{
+	FString BlueprintName;
+	if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name'"));
+
+	FString NodeId;
+	if (!Params->TryGetStringField(TEXT("node_id"), NodeId))
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing 'node_id'"));
+
+	FString PinName;
+	if (!Params->TryGetStringField(TEXT("pin_name"), PinName))
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing 'pin_name'"));
+
+	FString BlueprintPath = TEXT("/Game/UI/");
+	Params->TryGetStringField(TEXT("blueprint_path"), BlueprintPath);
+
+	UWidgetBlueprint* WBP = FindWidgetBlueprint(BlueprintName, BlueprintPath);
+	if (!WBP) return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *BlueprintName));
+
+	UBlueprint* Blueprint = Cast<UBlueprint>(WBP);
+
+	UEdGraphNode* TargetNode = FCommonUtils::FindNodeByGuidInBlueprint(Blueprint, NodeId);
+	if (!TargetNode) return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Node not found: %s"), *NodeId));
+
+	UEdGraphPin* TargetPin = nullptr;
+	for (UEdGraphPin* Pin : TargetNode->Pins)
+	{
+		if (Pin && Pin->PinName.ToString() == PinName)
+		{
+			TargetPin = Pin;
+			break;
+		}
+	}
+	if (!TargetPin) return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Pin not found: %s"), *PinName));
+
+	int32 DisconnectedCount = TargetPin->LinkedTo.Num();
+	TargetPin->BreakAllPinLinks();
+	FKismetEditorUtilities::CompileBlueprint(WBP);
+
+	TSharedPtr<FJsonObject> ResultObj = MakeShared<FJsonObject>();
+	ResultObj->SetBoolField(TEXT("success"), true);
+	ResultObj->SetStringField(TEXT("node_id"), NodeId);
+	ResultObj->SetStringField(TEXT("pin_name"), PinName);
+	ResultObj->SetNumberField(TEXT("disconnected_links"), DisconnectedCount);
+	return ResultObj;
+}
+
+TSharedPtr<FJsonObject> FWidgetCommands::HandleDeleteWidgetNode(const TSharedPtr<FJsonObject>& Params)
+{
+	FString BlueprintName;
+	if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name'"));
+
+	FString NodeId;
+	if (!Params->TryGetStringField(TEXT("node_id"), NodeId))
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing 'node_id'"));
+
+	FString BlueprintPath = TEXT("/Game/UI/");
+	Params->TryGetStringField(TEXT("blueprint_path"), BlueprintPath);
+
+	UWidgetBlueprint* WBP = FindWidgetBlueprint(BlueprintName, BlueprintPath);
+	if (!WBP) return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *BlueprintName));
+
+	UBlueprint* Blueprint = Cast<UBlueprint>(WBP);
+
+	UEdGraphNode* TargetNode = FCommonUtils::FindNodeByGuidInBlueprint(Blueprint, NodeId);
+	if (!TargetNode) return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Node not found: %s"), *NodeId));
+
+	UEdGraph* OwningGraph = TargetNode->GetGraph();
+	FString NodeTitle = TargetNode->GetNodeTitle(ENodeTitleType::ListView).ToString();
+	OwningGraph->RemoveNode(TargetNode);
+	FKismetEditorUtilities::CompileBlueprint(WBP);
+
+	TSharedPtr<FJsonObject> ResultObj = MakeShared<FJsonObject>();
+	ResultObj->SetBoolField(TEXT("success"), true);
+	ResultObj->SetStringField(TEXT("removed_node_id"), NodeId);
+	ResultObj->SetStringField(TEXT("removed_node_title"), NodeTitle);
+	return ResultObj;
+}
+
+// ============================================================================
+// Tier 10: Flow Control & Custom Events
+// ============================================================================
+
+TSharedPtr<FJsonObject> FWidgetCommands::HandleAddWidgetFlowControl(const TSharedPtr<FJsonObject>& Params)
+{
+	FString BlueprintName;
+	if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name'"));
+
+	FString ControlType;
+	if (!Params->TryGetStringField(TEXT("control_type"), ControlType))
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing 'control_type'"));
+
+	FVector2D NodePosition(0.0f, 0.0f);
+	if (Params->HasField(TEXT("node_position")))
+		NodePosition = FCommonUtils::GetVector2DFromJson(Params, TEXT("node_position"));
+
+	FString BlueprintPath = TEXT("/Game/UI/");
+	Params->TryGetStringField(TEXT("blueprint_path"), BlueprintPath);
+
+	FString GraphName;
+	Params->TryGetStringField(TEXT("graph_name"), GraphName);
+
+	UWidgetBlueprint* WBP = FindWidgetBlueprint(BlueprintName, BlueprintPath);
+	if (!WBP) return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *BlueprintName));
+
+	UBlueprint* Blueprint = Cast<UBlueprint>(WBP);
+
+	UEdGraph* EventGraph = nullptr;
+	if (!GraphName.IsEmpty())
+		EventGraph = FCommonUtils::FindGraphByName(Blueprint, GraphName);
+	if (!EventGraph)
+		EventGraph = FCommonUtils::FindOrCreateEventGraph(Blueprint);
+	if (!EventGraph)
+		return FCommonUtils::CreateErrorResponse(TEXT("Failed to get target graph"));
+
+	UEdGraphNode* NewNode = nullptr;
+
+	FString ControlTypeLower = ControlType.ToLower();
+
+	if (ControlTypeLower == TEXT("branch"))
+	{
+		UK2Node_IfThenElse* BranchNode = NewObject<UK2Node_IfThenElse>(EventGraph);
+		if (BranchNode)
+		{
+			BranchNode->CreateNewGuid();
+			BranchNode->NodePosX = NodePosition.X;
+			BranchNode->NodePosY = NodePosition.Y;
+			EventGraph->AddNode(BranchNode, true);
+			BranchNode->PostPlacedNewNode();
+			BranchNode->AllocateDefaultPins();
+			NewNode = BranchNode;
+		}
+	}
+	else if (ControlTypeLower == TEXT("sequence"))
+	{
+		UK2Node_ExecutionSequence* SeqNode = NewObject<UK2Node_ExecutionSequence>(EventGraph);
+		if (SeqNode)
+		{
+			SeqNode->CreateNewGuid();
+			SeqNode->NodePosX = NodePosition.X;
+			SeqNode->NodePosY = NodePosition.Y;
+			EventGraph->AddNode(SeqNode, true);
+			SeqNode->PostPlacedNewNode();
+			SeqNode->AllocateDefaultPins();
+			NewNode = SeqNode;
+		}
+	}
+	else
+	{
+		FString MacroPath;
+		if (ControlTypeLower == TEXT("forloop") || ControlTypeLower == TEXT("for"))
+			MacroPath = TEXT("/Engine/EditorBlueprintResources/StandardMacros.StandardMacros:ForLoop");
+		else if (ControlTypeLower == TEXT("foreachloop") || ControlTypeLower == TEXT("foreach"))
+			MacroPath = TEXT("/Engine/EditorBlueprintResources/StandardMacros.StandardMacros:ForEachLoop");
+		else if (ControlTypeLower == TEXT("foreachloopwithbreak"))
+			MacroPath = TEXT("/Engine/EditorBlueprintResources/StandardMacros.StandardMacros:ForEachLoopWithBreak");
+		else if (ControlTypeLower == TEXT("whileloop") || ControlTypeLower == TEXT("while"))
+			MacroPath = TEXT("/Engine/EditorBlueprintResources/StandardMacros.StandardMacros:WhileLoop");
+		else if (ControlTypeLower == TEXT("doonce"))
+			MacroPath = TEXT("/Engine/EditorBlueprintResources/StandardMacros.StandardMacros:DoOnce");
+		else if (ControlTypeLower == TEXT("multigate"))
+			MacroPath = TEXT("/Engine/EditorBlueprintResources/StandardMacros.StandardMacros:DoN");
+		else if (ControlTypeLower == TEXT("flipflop"))
+			MacroPath = TEXT("/Engine/EditorBlueprintResources/StandardMacros.StandardMacros:FlipFlop");
+		else if (ControlTypeLower == TEXT("gate"))
+			MacroPath = TEXT("/Engine/EditorBlueprintResources/StandardMacros.StandardMacros:Gate");
+
+		if (!MacroPath.IsEmpty())
+		{
+			UEdGraph* MacroGraph = LoadObject<UEdGraph>(nullptr, *MacroPath);
+			if (MacroGraph)
+			{
+				UK2Node_MacroInstance* MacroNode = NewObject<UK2Node_MacroInstance>(EventGraph);
+				if (MacroNode)
+				{
+					MacroNode->CreateNewGuid();
+					MacroNode->SetMacroGraph(MacroGraph);
+					MacroNode->NodePosX = NodePosition.X;
+					MacroNode->NodePosY = NodePosition.Y;
+					EventGraph->AddNode(MacroNode, true);
+					MacroNode->PostPlacedNewNode();
+					MacroNode->AllocateDefaultPins();
+					NewNode = MacroNode;
+				}
+			}
+			else
+			{
+				return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Failed to load macro: %s"), *MacroPath));
+			}
+		}
+		else
+		{
+			return FCommonUtils::CreateErrorResponse(FString::Printf(
+				TEXT("Unknown control_type: %s. Supported: branch, sequence, forloop, foreachloop, whileloop, doonce, multigate, flipflop, gate"), *ControlType));
+		}
+	}
+
+	if (!NewNode)
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Failed to create %s node"), *ControlType));
+
+	FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
+
+	TSharedPtr<FJsonObject> ResultObj = FCommonUtils::CreateNodeResponse(NewNode);
+	ResultObj->SetStringField(TEXT("control_type"), ControlType);
+	return ResultObj;
+}
+
+TSharedPtr<FJsonObject> FWidgetCommands::HandleAddWidgetCustomEvent(const TSharedPtr<FJsonObject>& Params)
+{
+	FString BlueprintName;
+	if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name'"));
+
+	FString EventName;
+	if (!Params->TryGetStringField(TEXT("event_name"), EventName))
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing 'event_name'"));
+
+	FString Action;
+	if (!Params->TryGetStringField(TEXT("action"), Action))
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing 'action' (define or call)"));
+
+	FVector2D NodePosition(0.0f, 0.0f);
+	if (Params->HasField(TEXT("node_position")))
+		NodePosition = FCommonUtils::GetVector2DFromJson(Params, TEXT("node_position"));
+
+	FString BlueprintPath = TEXT("/Game/UI/");
+	Params->TryGetStringField(TEXT("blueprint_path"), BlueprintPath);
+
+	FString GraphName;
+	Params->TryGetStringField(TEXT("graph_name"), GraphName);
+
+	UWidgetBlueprint* WBP = FindWidgetBlueprint(BlueprintName, BlueprintPath);
+	if (!WBP) return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *BlueprintName));
+
+	UBlueprint* Blueprint = Cast<UBlueprint>(WBP);
+
+	UEdGraph* TargetGraph = nullptr;
+	if (!GraphName.IsEmpty())
+		TargetGraph = FCommonUtils::FindGraphByName(Blueprint, GraphName);
+	if (!TargetGraph)
+		TargetGraph = FCommonUtils::FindOrCreateEventGraph(Blueprint);
+	if (!TargetGraph)
+		return FCommonUtils::CreateErrorResponse(TEXT("Failed to get target graph"));
+
+	if (Action == TEXT("define"))
+	{
+		for (UEdGraphNode* Node : TargetGraph->Nodes)
+		{
+			UK2Node_CustomEvent* Existing = Cast<UK2Node_CustomEvent>(Node);
+			if (Existing && Existing->CustomFunctionName == FName(*EventName))
+			{
+				TSharedPtr<FJsonObject> ResultObj = FCommonUtils::CreateNodeResponse(Existing);
+				ResultObj->SetBoolField(TEXT("already_exists"), true);
+				return ResultObj;
+			}
+		}
+
+		UK2Node_CustomEvent* CustomEventNode = NewObject<UK2Node_CustomEvent>(TargetGraph);
+		CustomEventNode->CreateNewGuid();
+		CustomEventNode->CustomFunctionName = FName(*EventName);
+		CustomEventNode->NodePosX = NodePosition.X;
+		CustomEventNode->NodePosY = NodePosition.Y;
+		TargetGraph->AddNode(CustomEventNode, true);
+		CustomEventNode->PostPlacedNewNode();
+		CustomEventNode->AllocateDefaultPins();
+
+		FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
+		return FCommonUtils::CreateNodeResponse(CustomEventNode);
+	}
+	else if (Action == TEXT("call"))
+	{
+		UK2Node_CustomEvent* FoundEvent = nullptr;
+		for (UEdGraphNode* Node : TargetGraph->Nodes)
+		{
+			UK2Node_CustomEvent* CustomEvent = Cast<UK2Node_CustomEvent>(Node);
+			if (CustomEvent && CustomEvent->CustomFunctionName == FName(*EventName))
+			{
+				FoundEvent = CustomEvent;
+				break;
+			}
+		}
+		if (!FoundEvent)
+			return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Custom event '%s' not found"), *EventName));
+
+		UK2Node_CallFunction* CallNode = NewObject<UK2Node_CallFunction>(TargetGraph);
+		CallNode->CreateNewGuid();
+		CallNode->FunctionReference.SetSelfMember(FName(*EventName));
+		CallNode->NodePosX = NodePosition.X;
+		CallNode->NodePosY = NodePosition.Y;
+		TargetGraph->AddNode(CallNode, true);
+		CallNode->PostPlacedNewNode();
+		CallNode->AllocateDefaultPins();
+
+		FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
+		return FCommonUtils::CreateNodeResponse(CallNode);
+	}
+
+	return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Invalid action: %s (use 'define' or 'call')"), *Action));
+}
+
+TSharedPtr<FJsonObject> FWidgetCommands::HandleAddWidgetGenericNode(const TSharedPtr<FJsonObject>& Params)
+{
+	FString BlueprintName;
+	if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name'"));
+
+	FString NodeClassName;
+	if (!Params->TryGetStringField(TEXT("node_class"), NodeClassName))
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing 'node_class'"));
+
+	FVector2D NodePosition(0.0f, 0.0f);
+	if (Params->HasField(TEXT("node_position")))
+		NodePosition = FCommonUtils::GetVector2DFromJson(Params, TEXT("node_position"));
+
+	FString BlueprintPath = TEXT("/Game/UI/");
+	Params->TryGetStringField(TEXT("blueprint_path"), BlueprintPath);
+
+	FString GraphName = TEXT("EventGraph");
+	Params->TryGetStringField(TEXT("graph_name"), GraphName);
+
+	UWidgetBlueprint* WBP = FindWidgetBlueprint(BlueprintName, BlueprintPath);
+	if (!WBP) return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *BlueprintName));
+
+	UBlueprint* Blueprint = Cast<UBlueprint>(WBP);
+
+	UEdGraph* TargetGraph = FCommonUtils::FindGraphByName(Blueprint, GraphName);
+	if (!TargetGraph) return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Graph not found: %s"), *GraphName));
+
+	UEdGraphNode* NewNode = FCommonUtils::CreateNodeByClassName(TargetGraph, NodeClassName, NodePosition);
+	if (!NewNode) return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Failed to create node: %s"), *NodeClassName));
+
+	FCommonUtils::InitializeNodeFromParams(NewNode, Params);
+	FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
+
+	TSharedPtr<FJsonObject> ResultObj = FCommonUtils::CreateNodeResponse(NewNode);
+	ResultObj->SetStringField(TEXT("graph_name"), TargetGraph->GetName());
+	return ResultObj;
+}
+
+// ============================================================================
+// Tier 11: Pin Value Management
+// ============================================================================
+
+TSharedPtr<FJsonObject> FWidgetCommands::HandleSetWidgetPinDefault(const TSharedPtr<FJsonObject>& Params)
+{
+	FString BlueprintName;
+	if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name'"));
+
+	FString NodeId;
+	if (!Params->TryGetStringField(TEXT("node_id"), NodeId))
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing 'node_id'"));
+
+	FString PinName;
+	if (!Params->TryGetStringField(TEXT("pin_name"), PinName))
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing 'pin_name'"));
+
+	FString BlueprintPath = TEXT("/Game/UI/");
+	Params->TryGetStringField(TEXT("blueprint_path"), BlueprintPath);
+
+	UWidgetBlueprint* WBP = FindWidgetBlueprint(BlueprintName, BlueprintPath);
+	if (!WBP) return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *BlueprintName));
+
+	UBlueprint* Blueprint = Cast<UBlueprint>(WBP);
+
+	UEdGraphNode* TargetNode = FCommonUtils::FindNodeByGuidInBlueprint(Blueprint, NodeId);
+	if (!TargetNode) return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Node not found: %s"), *NodeId));
+
+	UEdGraphPin* TargetPin = FCommonUtils::FindPin(TargetNode, PinName, EGPD_Input);
+	if (!TargetPin) TargetPin = FCommonUtils::FindPin(TargetNode, PinName, EGPD_Output);
+	if (!TargetPin) return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Pin not found: %s"), *PinName));
+
+	FString OriginalValue = TargetPin->DefaultValue;
+	const FName& PinCategory = TargetPin->PinType.PinCategory;
+
+	if (PinCategory == UEdGraphSchema_K2::PC_Wildcard)
+		return FCommonUtils::CreateErrorResponse(TEXT("Pin is Wildcard type. Connect a typed pin first."));
+
+	FString ValueStr;
+	double ValueNum = 0;
+	bool ValueBool = false;
+
+	if (PinCategory == UEdGraphSchema_K2::PC_Boolean)
+	{
+		if (Params->TryGetBoolField(TEXT("value"), ValueBool))
+			TargetPin->DefaultValue = ValueBool ? TEXT("true") : TEXT("false");
+		else if (Params->TryGetStringField(TEXT("value"), ValueStr))
+		{
+			FString Lower = ValueStr.ToLower();
+			if (Lower == TEXT("true") || Lower == TEXT("1")) TargetPin->DefaultValue = TEXT("true");
+			else TargetPin->DefaultValue = TEXT("false");
+		}
+		else
+			return FCommonUtils::CreateErrorResponse(TEXT("Missing 'value' for boolean pin"));
+	}
+	else if (Params->TryGetStringField(TEXT("value"), ValueStr))
+	{
+		if (PinCategory == UEdGraphSchema_K2::PC_Object || PinCategory == UEdGraphSchema_K2::PC_SoftObject)
+		{
+			UObject* FoundObject = LoadObject<UObject>(nullptr, *ValueStr);
+			if (FoundObject) { TargetPin->DefaultObject = FoundObject; TargetPin->DefaultValue = FoundObject->GetPathName(); }
+			else return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Object not found: %s"), *ValueStr));
+		}
+		else if (PinCategory == UEdGraphSchema_K2::PC_Class || PinCategory == UEdGraphSchema_K2::PC_SoftClass)
+		{
+			UClass* FoundClass = ValueStr.Contains(TEXT("/")) ? LoadClass<UObject>(nullptr, *ValueStr) : FCommonUtils::FindClassByName(ValueStr);
+			if (FoundClass) { TargetPin->DefaultObject = FoundClass; TargetPin->DefaultValue = FoundClass->GetPathName(); }
+			else return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Class not found: %s"), *ValueStr));
+		}
+		else if (PinCategory == UEdGraphSchema_K2::PC_Byte)
+		{
+			UEnum* EnumType = Cast<UEnum>(TargetPin->PinType.PinSubCategoryObject.Get());
+			if (EnumType)
+			{
+				int64 EnumValue = EnumType->GetValueByNameString(ValueStr);
+				if (EnumValue == INDEX_NONE)
+				{
+					FString FullName = FString::Printf(TEXT("%s::%s"), *EnumType->GetName(), *ValueStr);
+					EnumValue = EnumType->GetValueByNameString(FullName);
+				}
+				TargetPin->DefaultValue = (EnumValue != INDEX_NONE) ? EnumType->GetNameStringByValue(EnumValue) : ValueStr;
+			}
+			else
+				TargetPin->DefaultValue = ValueStr;
+		}
+		else
+			TargetPin->DefaultValue = ValueStr;
+	}
+	else if (Params->TryGetNumberField(TEXT("value"), ValueNum))
+	{
+		if (PinCategory == UEdGraphSchema_K2::PC_Int)
+			TargetPin->DefaultValue = FString::FromInt(FMath::RoundToInt(ValueNum));
+		else
+			TargetPin->DefaultValue = FString::SanitizeFloat(ValueNum);
+	}
+	else if (Params->TryGetBoolField(TEXT("value"), ValueBool))
+	{
+		TargetPin->DefaultValue = ValueBool ? TEXT("true") : TEXT("false");
+	}
+	else if (Params->HasField(TEXT("value")))
+	{
+		const TArray<TSharedPtr<FJsonValue>>* ArrayValue;
+		if (Params->TryGetArrayField(TEXT("value"), ArrayValue))
+		{
+			if (ArrayValue->Num() == 2)
+				TargetPin->DefaultValue = FString::Printf(TEXT("(X=%f,Y=%f)"), (*ArrayValue)[0]->AsNumber(), (*ArrayValue)[1]->AsNumber());
+			else if (ArrayValue->Num() == 3)
+				TargetPin->DefaultValue = FString::Printf(TEXT("(X=%f,Y=%f,Z=%f)"), (*ArrayValue)[0]->AsNumber(), (*ArrayValue)[1]->AsNumber(), (*ArrayValue)[2]->AsNumber());
+			else if (ArrayValue->Num() == 4)
+				TargetPin->DefaultValue = FString::Printf(TEXT("(R=%f,G=%f,B=%f,A=%f)"), (*ArrayValue)[0]->AsNumber(), (*ArrayValue)[1]->AsNumber(), (*ArrayValue)[2]->AsNumber(), (*ArrayValue)[3]->AsNumber());
+			else
+				return FCommonUtils::CreateErrorResponse(TEXT("Unsupported array size for value"));
+		}
+		else
+			return FCommonUtils::CreateErrorResponse(TEXT("Unsupported value type"));
+	}
+	else
+	{
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing 'value' parameter"));
+	}
+
+	bool bChanged = (TargetPin->DefaultValue != OriginalValue);
+	FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
+
+	TSharedPtr<FJsonObject> ResultObj = MakeShared<FJsonObject>();
+	ResultObj->SetBoolField(TEXT("success"), true);
+	ResultObj->SetStringField(TEXT("node_id"), NodeId);
+	ResultObj->SetStringField(TEXT("pin_name"), PinName);
+	ResultObj->SetStringField(TEXT("pin_type"), PinCategory.ToString());
+	ResultObj->SetStringField(TEXT("value_set"), TargetPin->DefaultValue);
+	ResultObj->SetBoolField(TEXT("value_changed"), bChanged);
+	return ResultObj;
+}
+
+TSharedPtr<FJsonObject> FWidgetCommands::HandleGetWidgetPinValue(const TSharedPtr<FJsonObject>& Params)
+{
+	FString BlueprintName;
+	if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name'"));
+
+	FString NodeId;
+	if (!Params->TryGetStringField(TEXT("node_id"), NodeId))
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing 'node_id'"));
+
+	FString PinName;
+	if (!Params->TryGetStringField(TEXT("pin_name"), PinName))
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing 'pin_name'"));
+
+	FString BlueprintPath = TEXT("/Game/UI/");
+	Params->TryGetStringField(TEXT("blueprint_path"), BlueprintPath);
+
+	UWidgetBlueprint* WBP = FindWidgetBlueprint(BlueprintName, BlueprintPath);
+	if (!WBP) return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *BlueprintName));
+
+	UBlueprint* Blueprint = Cast<UBlueprint>(WBP);
+
+	UEdGraphNode* TargetNode = FCommonUtils::FindNodeByGuidInBlueprint(Blueprint, NodeId);
+	if (!TargetNode) return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Node not found: %s"), *NodeId));
+
+	UEdGraphPin* TargetPin = FCommonUtils::FindPin(TargetNode, PinName, EGPD_Input);
+	if (!TargetPin) TargetPin = FCommonUtils::FindPin(TargetNode, PinName, EGPD_Output);
+	if (!TargetPin) return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Pin not found: %s"), *PinName));
+
+	TSharedPtr<FJsonObject> ResultObj = MakeShared<FJsonObject>();
+	ResultObj->SetBoolField(TEXT("success"), true);
+	ResultObj->SetStringField(TEXT("node_id"), NodeId);
+	ResultObj->SetStringField(TEXT("pin_name"), PinName);
+	ResultObj->SetStringField(TEXT("pin_type"), TargetPin->PinType.PinCategory.ToString());
+	ResultObj->SetStringField(TEXT("default_value"), TargetPin->DefaultValue);
+	if (TargetPin->DefaultObject)
+		ResultObj->SetStringField(TEXT("default_object"), TargetPin->DefaultObject->GetPathName());
+	ResultObj->SetBoolField(TEXT("has_connection"), TargetPin->HasAnyConnections());
+	return ResultObj;
+}
+
+// ============================================================================
+// Tier 12: Graph Introspection
+// ============================================================================
+
+TSharedPtr<FJsonObject> FWidgetCommands::HandleListWidgetGraphNodes(const TSharedPtr<FJsonObject>& Params)
+{
+	FString BlueprintName;
+	if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name'"));
+
+	FString BlueprintPath = TEXT("/Game/UI/");
+	Params->TryGetStringField(TEXT("blueprint_path"), BlueprintPath);
+
+	FString GraphName;
+	Params->TryGetStringField(TEXT("graph_name"), GraphName);
+
+	FString NodeType;
+	Params->TryGetStringField(TEXT("node_type"), NodeType);
+
+	FString NodeTitle;
+	Params->TryGetStringField(TEXT("node_title"), NodeTitle);
+
+	int32 Limit = 50;
+	Params->TryGetNumberField(TEXT("limit"), Limit);
+
+	UWidgetBlueprint* WBP = FindWidgetBlueprint(BlueprintName, BlueprintPath);
+	if (!WBP) return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *BlueprintName));
+
+	UBlueprint* Blueprint = Cast<UBlueprint>(WBP);
+
+	UEdGraph* TargetGraph = nullptr;
+	if (GraphName.IsEmpty())
+		TargetGraph = FCommonUtils::FindOrCreateEventGraph(Blueprint);
+	else
+		TargetGraph = FCommonUtils::FindGraphByName(Blueprint, GraphName);
+	if (!TargetGraph) return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Graph not found: %s"), *GraphName));
+
+	TArray<UEdGraphNode*> MatchingNodes;
+	for (UEdGraphNode* Node : TargetGraph->Nodes)
+	{
+		if (!Node) continue;
+		bool bMatches = true;
+
+		if (!NodeType.IsEmpty())
+		{
+			if (NodeType == TEXT("Event"))
+			{
+				if (!Cast<UK2Node_Event>(Node) && !Cast<UK2Node_CustomEvent>(Node)) bMatches = false;
+			}
+			else if (NodeType == TEXT("Function"))
+			{
+				if (!Cast<UK2Node_CallFunction>(Node)) bMatches = false;
+			}
+			else if (NodeType == TEXT("Variable"))
+			{
+				if (!Cast<UK2Node_VariableGet>(Node) && !Node->GetClass()->GetName().Contains(TEXT("VariableSet")))
+					bMatches = false;
+			}
+			else if (NodeType == TEXT("FlowControl"))
+			{
+				if (!Cast<UK2Node_IfThenElse>(Node) && !Cast<UK2Node_ExecutionSequence>(Node) && !Cast<UK2Node_MacroInstance>(Node))
+					bMatches = false;
+			}
+		}
+
+		if (bMatches && !NodeTitle.IsEmpty())
+		{
+			FString Title = Node->GetNodeTitle(ENodeTitleType::ListView).ToString();
+			if (!Title.Contains(NodeTitle, ESearchCase::IgnoreCase)) bMatches = false;
+		}
+
+		if (bMatches)
+		{
+			MatchingNodes.Add(Node);
+			if (MatchingNodes.Num() >= Limit) break;
+		}
+	}
+
+	TArray<TSharedPtr<FJsonValue>> NodesArray;
+	for (UEdGraphNode* Node : MatchingNodes)
+	{
+		TSharedPtr<FJsonObject> NodeObj = MakeShared<FJsonObject>();
+		NodeObj->SetStringField(TEXT("node_id"), Node->NodeGuid.ToString());
+		NodeObj->SetStringField(TEXT("title"), Node->GetNodeTitle(ENodeTitleType::ListView).ToString());
+		NodeObj->SetStringField(TEXT("class"), Node->GetClass()->GetName());
+		NodeObj->SetNumberField(TEXT("pos_x"), Node->NodePosX);
+		NodeObj->SetNumberField(TEXT("pos_y"), Node->NodePosY);
+		NodeObj->SetArrayField(TEXT("pins"), FCommonUtils::NodePinsToJson(Node));
+		NodesArray.Add(MakeShared<FJsonValueObject>(NodeObj));
+	}
+
+	TSharedPtr<FJsonObject> ResultObj = MakeShared<FJsonObject>();
+	ResultObj->SetBoolField(TEXT("success"), true);
+	ResultObj->SetStringField(TEXT("graph_name"), TargetGraph->GetName());
+	ResultObj->SetArrayField(TEXT("nodes"), NodesArray);
+	ResultObj->SetNumberField(TEXT("count"), NodesArray.Num());
+	return ResultObj;
+}
+
+TSharedPtr<FJsonObject> FWidgetCommands::HandleListWidgetGraphs(const TSharedPtr<FJsonObject>& Params)
+{
+	FString BlueprintName;
+	if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name'"));
+
+	FString BlueprintPath = TEXT("/Game/UI/");
+	Params->TryGetStringField(TEXT("blueprint_path"), BlueprintPath);
+
+	UWidgetBlueprint* WBP = FindWidgetBlueprint(BlueprintName, BlueprintPath);
+	if (!WBP) return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *BlueprintName));
+
+	UBlueprint* Blueprint = Cast<UBlueprint>(WBP);
+	TArray<UEdGraph*> AllGraphs = FCommonUtils::GetAllGraphs(Blueprint);
+
+	TArray<TSharedPtr<FJsonValue>> GraphsArray;
+	for (UEdGraph* Graph : AllGraphs)
+	{
+		if (!Graph) continue;
+		GraphsArray.Add(MakeShared<FJsonValueObject>(FCommonUtils::GraphToJson(Graph)));
+	}
+
+	TSharedPtr<FJsonObject> ResultObj = MakeShared<FJsonObject>();
+	ResultObj->SetBoolField(TEXT("success"), true);
+	ResultObj->SetStringField(TEXT("blueprint"), BlueprintName);
+	ResultObj->SetArrayField(TEXT("graphs"), GraphsArray);
+	ResultObj->SetNumberField(TEXT("count"), GraphsArray.Num());
+	return ResultObj;
+}
+
+TSharedPtr<FJsonObject> FWidgetCommands::HandleCompileWidgetBlueprint(const TSharedPtr<FJsonObject>& Params)
+{
+	FString BlueprintName;
+	if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name'"));
+
+	FString BlueprintPath = TEXT("/Game/UI/");
+	Params->TryGetStringField(TEXT("blueprint_path"), BlueprintPath);
+
+	bool bValidateOnly = false;
+	Params->TryGetBoolField(TEXT("validate_only"), bValidateOnly);
+
+	UWidgetBlueprint* WBP = FindWidgetBlueprint(BlueprintName, BlueprintPath);
+	if (!WBP) return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *BlueprintName));
+
+	UBlueprint* Blueprint = Cast<UBlueprint>(WBP);
+
+	TArray<TSharedPtr<FJsonValue>> Issues = FCommonUtils::ValidateBlueprintGraphs(Blueprint);
+
+	if (Issues.Num() > 0)
+	{
+		TSharedPtr<FJsonObject> ResultObj = MakeShared<FJsonObject>();
+		ResultObj->SetBoolField(TEXT("success"), false);
+		ResultObj->SetStringField(TEXT("error"), TEXT("Validation failed. Fix issues before compiling."));
+		ResultObj->SetArrayField(TEXT("validation_issues"), Issues);
+		return ResultObj;
+	}
+
+	if (bValidateOnly)
+	{
+		TSharedPtr<FJsonObject> ResultObj = MakeShared<FJsonObject>();
+		ResultObj->SetBoolField(TEXT("success"), true);
+		ResultObj->SetStringField(TEXT("message"), TEXT("Validation passed. Ready to compile."));
+		return ResultObj;
+	}
+
+	FCompilerResultsLog ResultsLog;
+	FKismetEditorUtilities::CompileBlueprint(WBP, EBlueprintCompileOptions::None, &ResultsLog);
+
+	bool bHasErrors = WBP->Status == BS_Error;
+	TSharedPtr<FJsonObject> ResultObj = MakeShared<FJsonObject>();
+	ResultObj->SetStringField(TEXT("blueprint"), BlueprintName);
+	ResultObj->SetBoolField(TEXT("success"), !bHasErrors);
+
+	if (bHasErrors)
+	{
+		TArray<TSharedPtr<FJsonValue>> CompileErrors;
+		for (const TSharedRef<FTokenizedMessage>& Msg : ResultsLog.Messages)
+		{
+			TSharedPtr<FJsonObject> ErrObj = MakeShared<FJsonObject>();
+			ErrObj->SetStringField(TEXT("message"), Msg->ToText().ToString());
+			ErrObj->SetStringField(TEXT("severity"), Msg->GetSeverity() == EMessageSeverity::Error ? TEXT("error") : TEXT("warning"));
+			CompileErrors.Add(MakeShared<FJsonValueObject>(ErrObj));
+		}
+		ResultObj->SetArrayField(TEXT("compile_errors"), CompileErrors);
+	}
+
+	return ResultObj;
+}
+
+// ============================================================================
+// Tier 13: Auxiliary
+// ============================================================================
+
+TSharedPtr<FJsonObject> FWidgetCommands::HandleAddWidgetCommentBox(const TSharedPtr<FJsonObject>& Params)
+{
+	FString BlueprintName;
+	if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name'"));
+
+	FString CommentText;
+	if (!Params->TryGetStringField(TEXT("comment_text"), CommentText))
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing 'comment_text'"));
+
+	FString BlueprintPath = TEXT("/Game/UI/");
+	Params->TryGetStringField(TEXT("blueprint_path"), BlueprintPath);
+
+	FString GraphName;
+	Params->TryGetStringField(TEXT("graph_name"), GraphName);
+
+	UWidgetBlueprint* WBP = FindWidgetBlueprint(BlueprintName, BlueprintPath);
+	if (!WBP) return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *BlueprintName));
+
+	UBlueprint* Blueprint = Cast<UBlueprint>(WBP);
+
+	UEdGraph* TargetGraph = nullptr;
+	if (!GraphName.IsEmpty())
+		TargetGraph = FCommonUtils::FindGraphByName(Blueprint, GraphName);
+	if (!TargetGraph)
+		TargetGraph = FCommonUtils::FindOrCreateEventGraph(Blueprint);
+	if (!TargetGraph) return FCommonUtils::CreateErrorResponse(TEXT("Failed to get target graph"));
+
+	FVector2D Position(0.0f, 0.0f);
+	if (Params->HasField(TEXT("position")))
+		Position = FCommonUtils::GetVector2DFromJson(Params, TEXT("position"));
+
+	FVector2D Size(400.0f, 200.0f);
+	if (Params->HasField(TEXT("size")))
+		Size = FCommonUtils::GetVector2DFromJson(Params, TEXT("size"));
+
+	UEdGraphNode_Comment* CommentNode = NewObject<UEdGraphNode_Comment>(TargetGraph);
+	CommentNode->NodeComment = CommentText;
+	CommentNode->NodePosX = Position.X;
+	CommentNode->NodePosY = Position.Y;
+	CommentNode->NodeWidth = Size.X;
+	CommentNode->NodeHeight = Size.Y;
+
+	TargetGraph->AddNode(CommentNode);
+	CommentNode->CreateNewGuid();
+	CommentNode->PostPlacedNewNode();
+
+	FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
+
+	TSharedPtr<FJsonObject> ResultObj = MakeShared<FJsonObject>();
+	ResultObj->SetBoolField(TEXT("success"), true);
+	ResultObj->SetStringField(TEXT("node_id"), CommentNode->NodeGuid.ToString());
+	ResultObj->SetStringField(TEXT("comment_text"), CommentText);
+	return ResultObj;
+}
+
+TSharedPtr<FJsonObject> FWidgetCommands::HandleAddWidgetFunctionOverride(const TSharedPtr<FJsonObject>& Params)
+{
+	FString BlueprintName;
+	if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name'"));
+
+	FString FunctionName;
+	if (!Params->TryGetStringField(TEXT("function_name"), FunctionName))
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing 'function_name'"));
+
+	FString BlueprintPath = TEXT("/Game/UI/");
+	Params->TryGetStringField(TEXT("blueprint_path"), BlueprintPath);
+
+	UWidgetBlueprint* WBP = FindWidgetBlueprint(BlueprintName, BlueprintPath);
+	if (!WBP) return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *BlueprintName));
+
+	UBlueprint* Blueprint = Cast<UBlueprint>(WBP);
+
+	UK2Node_FunctionEntry* FunctionEntry = nullptr;
+	UEdGraph* OverrideGraph = FCommonUtils::CreateFunctionOverride(Blueprint, FunctionName, FunctionEntry);
+
+	if (!OverrideGraph || !FunctionEntry)
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Failed to create override for function: %s"), *FunctionName));
+
+	FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
+
+	TSharedPtr<FJsonObject> ResultObj = MakeShared<FJsonObject>();
+	ResultObj->SetBoolField(TEXT("success"), true);
+	ResultObj->SetStringField(TEXT("blueprint_name"), BlueprintName);
+	ResultObj->SetStringField(TEXT("function_name"), FunctionName);
+	ResultObj->SetStringField(TEXT("graph_name"), OverrideGraph->GetName());
+	ResultObj->SetStringField(TEXT("entry_node_id"), FunctionEntry->NodeGuid.ToString());
+	return ResultObj;
 }

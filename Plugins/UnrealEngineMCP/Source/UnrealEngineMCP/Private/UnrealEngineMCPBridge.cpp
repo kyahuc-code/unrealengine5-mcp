@@ -179,7 +179,11 @@ static bool IsReadOnlyCommand(const FString& CommandType)
 		   CommandType == TEXT("list_widget_animations") ||
 		   CommandType == TEXT("analyze_widget_hierarchy") ||
 		   CommandType == TEXT("get_widget_type_info") ||
-		   CommandType == TEXT("search_widgets");
+		   CommandType == TEXT("search_widgets") ||
+		   CommandType == TEXT("get_widget_variables") ||
+		   CommandType == TEXT("get_widget_pin_value") ||
+		   CommandType == TEXT("list_widget_graph_nodes") ||
+		   CommandType == TEXT("list_widget_graphs");
 }
 
 FString UUnrealEngineMCPBridge::ExecuteCommandInternal(const FString& CommandType, const TSharedPtr<FJsonObject>& Params)
@@ -388,7 +392,23 @@ FString UUnrealEngineMCPBridge::ExecuteCommandInternal(const FString& CommandTyp
 				 CommandType == TEXT("set_box_slot") ||
 				 CommandType == TEXT("set_grid_slot") ||
 				 CommandType == TEXT("set_widget_transform") ||
-				 CommandType == TEXT("set_widget_tooltip"))
+				 CommandType == TEXT("set_widget_tooltip") ||
+				 CommandType == TEXT("add_widget_variable") ||
+				 CommandType == TEXT("delete_widget_variable") ||
+				 CommandType == TEXT("get_widget_variables") ||
+				 CommandType == TEXT("connect_widget_nodes") ||
+				 CommandType == TEXT("disconnect_widget_nodes") ||
+				 CommandType == TEXT("delete_widget_node") ||
+				 CommandType == TEXT("add_widget_flow_control") ||
+				 CommandType == TEXT("add_widget_custom_event") ||
+				 CommandType == TEXT("add_widget_generic_node") ||
+				 CommandType == TEXT("set_widget_pin_default") ||
+				 CommandType == TEXT("get_widget_pin_value") ||
+				 CommandType == TEXT("list_widget_graph_nodes") ||
+				 CommandType == TEXT("list_widget_graphs") ||
+				 CommandType == TEXT("compile_widget_blueprint") ||
+				 CommandType == TEXT("add_widget_comment_box") ||
+				 CommandType == TEXT("add_widget_function_override"))
 		{
 			ResultJson = WidgetCommandHandler->HandleCommand(CommandType, Params);
 		}

@@ -8,7 +8,7 @@ class UWidget;
 class UPanelWidget;
 
 /**
- * Handles Widget Blueprint (UMG) commands (30 total)
+ * Handles Widget Blueprint (UMG) commands (46 total)
  * Creates and manipulates Widget Blueprints for UI development
  */
 class UNREALENGINEMCP_API FWidgetCommands
@@ -65,6 +65,34 @@ private:
 
 	// === Tier 7: Advanced (1) ===
 	TSharedPtr<FJsonObject> HandleSetWidgetTooltip(const TSharedPtr<FJsonObject>& Params);
+
+	// === Tier 8: Variable Management (3) ===
+	TSharedPtr<FJsonObject> HandleAddWidgetVariable(const TSharedPtr<FJsonObject>& Params);
+	TSharedPtr<FJsonObject> HandleDeleteWidgetVariable(const TSharedPtr<FJsonObject>& Params);
+	TSharedPtr<FJsonObject> HandleGetWidgetVariables(const TSharedPtr<FJsonObject>& Params);
+
+	// === Tier 9: Node Connection/Deletion (3) ===
+	TSharedPtr<FJsonObject> HandleConnectWidgetNodes(const TSharedPtr<FJsonObject>& Params);
+	TSharedPtr<FJsonObject> HandleDisconnectWidgetNodes(const TSharedPtr<FJsonObject>& Params);
+	TSharedPtr<FJsonObject> HandleDeleteWidgetNode(const TSharedPtr<FJsonObject>& Params);
+
+	// === Tier 10: Flow Control & Custom Events (3) ===
+	TSharedPtr<FJsonObject> HandleAddWidgetFlowControl(const TSharedPtr<FJsonObject>& Params);
+	TSharedPtr<FJsonObject> HandleAddWidgetCustomEvent(const TSharedPtr<FJsonObject>& Params);
+	TSharedPtr<FJsonObject> HandleAddWidgetGenericNode(const TSharedPtr<FJsonObject>& Params);
+
+	// === Tier 11: Pin Value Management (2) ===
+	TSharedPtr<FJsonObject> HandleSetWidgetPinDefault(const TSharedPtr<FJsonObject>& Params);
+	TSharedPtr<FJsonObject> HandleGetWidgetPinValue(const TSharedPtr<FJsonObject>& Params);
+
+	// === Tier 12: Graph Introspection (3) ===
+	TSharedPtr<FJsonObject> HandleListWidgetGraphNodes(const TSharedPtr<FJsonObject>& Params);
+	TSharedPtr<FJsonObject> HandleListWidgetGraphs(const TSharedPtr<FJsonObject>& Params);
+	TSharedPtr<FJsonObject> HandleCompileWidgetBlueprint(const TSharedPtr<FJsonObject>& Params);
+
+	// === Tier 13: Auxiliary (2) ===
+	TSharedPtr<FJsonObject> HandleAddWidgetCommentBox(const TSharedPtr<FJsonObject>& Params);
+	TSharedPtr<FJsonObject> HandleAddWidgetFunctionOverride(const TSharedPtr<FJsonObject>& Params);
 
 	// === Helpers ===
 	UWidgetBlueprint* FindWidgetBlueprint(const FString& Name, const FString& Path);
